@@ -1,0 +1,249 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #ffff00;
+  --color-background: #050502;
+  --color-foreground: #ffffff;
+  --color-deep-black: #000000;
+  --color-dark-panel: #0a0a05;
+  --color-stable: rgba(255, 255, 0, 0.1);
+  
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Global Selection */
+::selection {
+  background-color: #FFFF00; /* Neon Yellow */
+  color: #000000;            /* Deep Black for contrast */
+  text-shadow: none;         /* Remove glow for readability during selection */
+}
+
+/* Para garantir que funcione no Firefox */
+::-moz-selection {
+  background-color: #FFFF00;
+  color: #000000;
+  text-shadow: none;
+}
+
+/* Regra específica para o Editor de Notas (textarea invisível) */
+textarea.selection-yellow::selection {
+  background-color: rgba(255, 255, 0, 0.99);
+  color: #000000;
+}
+
+/* MARKDOWN_MARKER_PROTOCOL */
+.md-marker {
+  opacity: 0.15; /* Símbolos Markdown ficam quase invisíveis para focar no conteúdo */
+  font-weight: normal;
+}
+
+.md-bold {
+  color: #FFFF00;
+  font-weight: bold;
+  text-shadow: 0 0 12px rgba(255, 255, 0, 0.7); /* Efeito Bloom Intenso */
+}
+
+/* Garante que o cursor não saia do lugar */
+.flex.items-center {
+  height: 24px !important;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 0, 0.2);
+  border-radius: 2px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 0, 0.5);
+}
+
+.arkan-grid-overlay {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 0, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 0, 0.05) 1px, transparent 1px);
+  background-size: 40px 40px;
+  z-index: 0;
+}
+
+.neon-text {
+  text-shadow: 0 0 8px rgba(255, 255, 0, 0.4);
+}
+
+.neon-glow {
+  filter: drop-shadow(0 0 8px rgba(255, 255, 0, 0.4));
+}
+
+.neon-glow-strong {
+  filter: drop-shadow(0 0 20px rgba(255, 255, 0, 0.7));
+}
+
+.technical-border {
+  border: 1px solid rgba(255, 255, 0, 0.15);
+  position: relative;
+}
+
+.technical-border::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  width: 8px;
+  height: 8px;
+  border-top: 2px solid #ffff00;
+  border-left: 2px solid #ffff00;
+}
+
+@keyframes pulse-intense {
+  0%, 100% { opacity: 1; transform: scale(1); filter: drop-shadow(0 0 15px rgba(255, 255, 0, 0.5)); }
+  50% { opacity: 0.9; transform: scale(1.01); filter: drop-shadow(0 0 25px rgba(255, 255, 0, 0.8)); }
+}
+
+@keyframes rhythm-pulse {
+  0%, 100% { filter: drop-shadow(0 0 5px rgba(255, 255, 0, 0.3)); opacity: 0.8; }
+  20% { filter: drop-shadow(0 0 20px rgba(255, 255, 0, 0.9)); opacity: 1; }
+}
+
+.animate-timer-pulse {
+  animation: pulse-intense 2.5s infinite ease-in-out;
+}
+
+.animate-metronome-pulse {
+  animation: rhythm-pulse 0.5s infinite;
+}
+
+@keyframes scan {
+  0% { top: 0; }
+  100% { top: 100%; }
+}
+
+.animate-scan {
+  animation: scan 3s linear infinite;
+}
+
+.crt-overlay {
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.02), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.02));
+  background-size: 100% 2px, 3px 100%;
+  pointer-events: none;
+}
+
+.arkan-title {
+  text-shadow: 0 0 15px rgba(255, 255, 0, 0.3);
+}
+
+@keyframes block-pulse {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+.terminal-cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.2em;
+  background-color: #f9f906;
+  vertical-align: middle;
+  margin-left: 1px;
+  animation: block-pulse 1s steps(1) infinite;
+  box-shadow: 0 0 12px rgba(249, 249, 6, 0.8);
+  z-index: 30;
+  position: absolute;
+  pointer-events: none;
+}
+
+/* Advanced Markdown Styles - Enforce fixed vertical rhythm */
+.md-h1, .md-h2, .md-bold, .md-italic, .md-quote, .md-divider {
+  line-height: 24px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  font-size: inherit !important;
+  display: inline-flex !important;
+  align-items: center !important;
+}
+
+.md-h1 {
+  color: #f9f906;
+  font-weight: 700;
+  text-shadow: 0 0 10px rgba(249, 249, 6, 0.4);
+}
+
+.md-h2 {
+  color: #f9f906;
+  font-weight: 600;
+}
+
+.md-bold {
+  color: #f9f906;
+  font-weight: 700;
+  text-shadow: 0 0 12px rgba(249, 249, 6, 0.6);
+}
+
+.md-italic {
+  color: rgba(249, 249, 6, 0.6);
+  font-style: italic;
+}
+
+.md-quote {
+  border-left: 2px solid #f9f906;
+  padding-left: 1rem;
+  margin-left: 0.5rem;
+  color: rgba(255, 255, 255, 0.6);
+  font-style: italic;
+}
+
+.md-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #f9f906, transparent);
+  box-shadow: 0 0 8px #f9f906;
+  margin: 1rem 0;
+  width: 100%;
+}
+
+.md-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgba(249, 249, 6, 0.4);
+  background: rgba(249, 249, 6, 0.05);
+  margin-right: 0.5rem;
+  cursor: pointer;
+  box-shadow: 0 0 5px rgba(249, 249, 6, 0.2);
+}
+
+.md-checkbox.checked {
+  background: rgba(249, 249, 6, 0.2);
+  border-color: #f9f906;
+}
+
+@keyframes glitch-fade-out {
+  0% { opacity: 1; transform: translateX(0); }
+  20% { opacity: 0.8; transform: translateX(-2px); filter: hue-rotate(90deg); }
+  40% { opacity: 0.9; transform: translateX(2px); filter: hue-rotate(-90deg); }
+  60% { opacity: 0.4; transform: translateX(-1px); }
+  80% { opacity: 0.6; transform: translateX(1px); }
+  100% { opacity: 0; transform: scale(0.95); }
+}
+
+.animate-glitch-fade-out {
+  animation: glitch-fade-out 0.4s ease-out forwards;
+}
+
