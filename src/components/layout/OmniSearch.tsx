@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
+﻿import React, { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { useSearchStore, SearchResult } from "@/store/useSearchStore";
 import { cn } from "@/lib/utils";
 import {
@@ -16,6 +17,7 @@ import { ArkanAudio } from "@/lib/audio/ArkanAudio";
 
 export function OmniSearch() {
     const { query, setQuery, executeSearch, results, clearResults, isOpen, toggleSearch } = useSearchStore();
+    const navigate = useNavigate();
     const [selectedIndex, setSelectedIndex] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
 
@@ -55,16 +57,26 @@ export function OmniSearch() {
             ArkanAudio.playFast('key_tick');
         }
         if (e.key === "Enter") {
-            handleSelect(results[selectedIndex]);
+            if (results[selectedIndex]) {
+                handleSelect(results[selectedIndex]);
+            } else if (query.trim()) {
+                ArkanAudio.playFast('confirm');
+                toggleSearch(false);
+                navigate(`/search?q=${encodeURIComponent(query)}`);
+            }
         }
     };
 
     const handleSelect = (result: SearchResult) => {
         if (!result) return;
         ArkanAudio.playFast('confirm');
-        console.log(`>> SYSTEM_EXECUTE: ${result.action || result.title}`);
 
-        // Handle theme commands
+        if (result.route) {
+            navigate(`/search?q=${encodeURIComponent(result.title)}`);
+            toggleSearch(false);
+            return;
+        }
+
         if (result.action?.startsWith('SET_THEME_')) {
             const theme = result.action.replace('SET_THEME_', '').toLowerCase();
             document.documentElement.setAttribute('data-theme', theme);
@@ -215,3 +227,4 @@ export function OmniSearch() {
         </div>
     );
 }
+

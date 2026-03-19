@@ -1,4 +1,9 @@
-import { create } from "zustand";
+﻿import { create } from "zustand";
+import { buildSearchDocuments, searchDocuments } from "@/lib/search";
+import { useNoteStore } from "@/store/useNoteStore";
+import { useProjectStore } from "@/store/useProjectStore";
+import { useSystemLogStore } from "@/store/useSystemLogStore";
+import { useTaskStore } from "@/store/useTaskStore";
 
 export interface SearchResult {
   id: string;
@@ -6,6 +11,8 @@ export interface SearchResult {
   type: string;
   description?: string;
   action?: string;
+  route?: string;
+  technicalId?: string;
 }
 
 interface SearchState {
@@ -18,6 +25,26 @@ interface SearchState {
   clearResults: () => void;
 }
 
+function buildQuickResults(query: string): SearchResult[] {
+  if (!query.trim()) return [];
+
+  const documents = buildSearchDocuments({
+    projects: useProjectStore.getState().projects,
+    tasks: useTaskStore.getState().tasks,
+    notes: useNoteStore.getState().nodes,
+    logs: useSystemLogStore.getState().logs,
+  });
+
+  return searchDocuments(documents, query, { limit: 6 }).map((result) => ({
+    id: result.id,
+    title: result.title,
+    type: result.source,
+    description: result.snippet || result.breadcrumb.join(" > "),
+    route: result.route,
+    technicalId: result.technicalId,
+  }));
+}
+
 export const useSearchStore = create<SearchState>((set) => ({
   query: "",
   setQuery: (query) => set({ query }),
@@ -25,14 +52,7 @@ export const useSearchStore = create<SearchState>((set) => ({
   toggleSearch: (isOpen) => set({ isOpen }),
   results: [],
   executeSearch: (query) => {
-    if (!query) return set({ results: [] });
-    // Mock search logic
-    set({
-      results: [
-        { id: "1", title: "Dashboard", type: "COMMAND", action: "NAV_DASHBOARD" },
-        { id: "2", title: "Set Theme Dark", type: "COMMAND", action: "SET_THEME_DARK" }
-      ].filter(r => r.title.toLowerCase().includes(query.toLowerCase()))
-    });
+    set({ results: buildQuickResults(query) });
   },
   clearResults: () => set({ results: [] }),
 }));

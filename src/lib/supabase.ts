@@ -1,35 +1,25 @@
-// Mock Supabase client for preview environment
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://mock.supabase.co";
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "mock-key";
+﻿import { createClient } from "@supabase/supabase-js";
 
-export const supabase = {
-  auth: {
-    getSession: async () => ({ data: { session: { user: { id: "mock-user", email: "user@example.com" } } }, error: null }),
-    onAuthStateChange: (callback: any) => {
-      // Immediately trigger with a mock session
-      callback('SIGNED_IN', { user: { id: "mock-user", email: "user@example.com" } });
-      return { data: { subscription: { unsubscribe: () => {} } } };
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
+const supabaseKey = (
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim() ||
+  import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
+);
+
+export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
+
+if (!hasSupabaseConfig) {
+  console.warn("Supabase configuration is missing. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (or VITE_SUPABASE_ANON_KEY).");
+}
+
+export const supabase = createClient(
+  supabaseUrl ?? "https://invalid.supabase.co",
+  supabaseKey ?? "invalid-key",
+  {
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: true,
     },
-    signOut: async () => ({ error: null }),
-  },
-  from: () => {
-    const chain = {
-      select: () => chain,
-      eq: () => chain,
-      gte: () => chain,
-      lte: () => chain,
-      order: () => chain,
-      update: () => chain,
-      insert: () => Promise.resolve({ data: [], error: null }),
-      then: (resolve: any) => resolve({ data: [], error: null }),
-    };
-    return chain;
-  },
-  channel: () => ({
-    on: () => ({
-      subscribe: () => ({}),
-    }),
-  }),
-  removeChannel: () => {},
-} as any;
-
+  }
+);

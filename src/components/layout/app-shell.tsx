@@ -7,21 +7,43 @@ import { HardwareHUD } from "./HardwareHUD";
 import { OmniSearch } from "./OmniSearch";
 import TacticalContextMenu from "./TacticalContextMenu";
 import { cn } from "@/lib/utils";
-import { useThemeStore } from "@/store/useTheme";
+import { THEME_SWATCHES, useThemeStore } from "@/store/useTheme";
 import { motion, AnimatePresence } from "framer-motion";
-import { useTaskStore } from "@/store/useTaskStore";
 import { supabase } from "@/lib/supabase";
 import { SplashSequence } from "./SplashSequence";
 import { ModuleInitModal } from "../ui/ModuleInitModal";
 import { OnboardingFlow } from "../onboarding/OnboardingFlow";
 import { ArkanAudio } from "@/lib/audio/ArkanAudio";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Menu, X } from "lucide-react";
 
 import { useChronosStore } from "@/store/useChronosStore";
 import { useSystemLogStore } from "@/store/useSystemLogStore";
 import { ArkanCommands } from "@/lib/commands";
 
 import { useUIStore } from "@/store/useUIStore";
+import { hasCompletedOnboarding } from "@/lib/onboarding";
+
+const CONTENT_ROUTES = ["/dashboard", "/operations", "/kanban", "/notes", "/timers", "/search", "/archive", "/expeditions", "/shopping", "/calendar", "/settings"];
+const INBOX_HIDDEN_ROUTES = ["/dashboard", "/operations", "/kanban", "/tasks", "/timers", "/search", "/expeditions", "/shopping", "/calendar", "/settings"];
+
+interface ShellUser {
+    id: string;
+    email?: string | null;
+}
+
+function hexToRgb(hex: string) {
+    const normalized = hex.replace('#', '');
+    const value = normalized.length === 3
+        ? normalized.split('').map((char) => `${char}${char}`).join('')
+        : normalized;
+    const parsed = Number.parseInt(value, 16);
+
+    return {
+        r: (parsed >> 16) & 255,
+        g: (parsed >> 8) & 255,
+        b: parsed & 255,
+    };
+}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
     const { isNewProjectModalOpen, setIsNewProjectModalOpen } = useUIStore();
@@ -29,26 +51,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const [inboxCollapsed, setInboxCollapsed] = useState(false);
     const [showSplash, setShowSplash] = useState(false);
     const [showOnboarding, setShowOnboarding] = useState(false);
+    const [currentUser, setCurrentUser] = useState<ShellUser | null>(null);
     const { pathname } = useLocation();
     const navigate = useNavigate();
     const theme = useThemeStore((state) => state.theme);
-    const { tasks } = useTaskStore();
 
     useEffect(() => {
         // Disabled for debugging
     }, []);
 
-    const [user, setUser] = useState<any>(null);
-
     useEffect(() => {
         const syncUser = async () => {
             const { data: { session } } = await supabase.auth.getSession();
-            setUser(session?.user ?? null);
+            setCurrentUser(session?.user ? { id: session.user.id, email: session.user.email } : null);
         };
         syncUser();
 
-        const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-            setUser(session?.user ?? null);
+        const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+            setCurrentUser(session?.user ? { id: session.user.id, email: session.user.email } : null);
         });
 
         return () => {
@@ -57,7 +77,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }, []);
 
     useEffect(() => {
-        document.documentElement.setAttribute('data-theme', theme);
+        const root = document.documentElement;
+        const primary = THEME_SWATCHES[theme] ?? THEME_SWATCHES.yellow;
+        const rgb = hexToRgb(primary);
+
+        root.setAttribute('data-theme', theme);
+        root.style.setProperty('--color-primary', primary);
+        root.style.setProperty('--color-stable', `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.12)`);
     }, [theme]);
 
     useEffect(() => {
@@ -110,6 +136,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }, [navigate]);
 
     const isPublicPage = ["/", "/login", "/signup"].includes(pathname);
+    const showPagePadding = !CONTENT_ROUTES.includes(pathname);
+    const showHardwareHud = showPagePadding;
+    const showDesktopInbox = !INBOX_HIDDEN_ROUTES.includes(pathname);
+
+    useEffect(() => {
+        if (isPublicPage || !currentUser) {
+            setShowOnboarding(false);
+            return;
+        }
+
+        setShowOnboarding(!hasCompletedOnboarding(currentUser.id));
+    }, [currentUser, isPublicPage, pathname]);
 
     if (isPublicPage && pathname === "/") {
         return (
@@ -119,7 +157,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         );
     }
 
-    if ((pathname === "/login" || pathname === "/signup")) {
+    if (pathname === "/login" || pathname === "/signup") {
         return <div className="min-h-screen bg-background text-foreground">{children}</div>;
     }
 
@@ -128,27 +166,82 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="fixed inset-0 crt-overlay z-[1000] pointer-events-none opacity-40"></div>
             <div className="arkan-grid-overlay pointer-events-none" />
 
-            {showOnboarding && <OnboardingFlow onComplete={() => setShowOnboarding(false)} />}
+            {showOnboarding && currentUser && (
+                <OnboardingFlow
+                    userId={currentUser.id}
+                    userEmail={currentUser.email}
+                    onComplete={() => setShowOnboarding(false)}
+                />
+            )}
 
             {showSplash && pathname === '/dashboard' && !showOnboarding && (
                 <SplashSequence onComplete={() => setShowSplash(false)} />
             )}
 
+            <AnimatePresence>
+                {isSidebarOpen && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[1100] lg:hidden"
+                    >
+                        <button
+                            type="button"
+                            aria-label="Close navigation menu"
+                            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+                            onClick={() => setIsSidebarOpen(false)}
+                        />
+                        <motion.div
+                            initial={{ x: -320 }}
+                            animate={{ x: 0 }}
+                            exit={{ x: -320 }}
+                            transition={{ duration: 0.25, ease: [0.2, 0, 0, 1] }}
+                            className="absolute inset-y-0 left-0 w-[280px] border-r border-primary/20 bg-dark-panel shadow-[0_0_30px_rgba(0,0,0,0.45)]"
+                        >
+                            <div className="flex items-center justify-between border-b border-primary/10 px-4 py-4">
+                                <div>
+                                    <div className="text-[10px] font-bold tracking-[0.24em] uppercase text-primary">Navigation</div>
+                                    <div className="text-[9px] uppercase tracking-[0.18em] text-primary/40">Mobile Access Layer</div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsSidebarOpen(false)}
+                                    className="flex h-9 w-9 items-center justify-center rounded-sm border border-primary/20 bg-primary/5 text-primary/70 transition-colors hover:border-primary/50 hover:text-primary"
+                                >
+                                    <X size={16} />
+                                </button>
+                            </div>
+                            <Sidebar variant="expanded" className="h-full w-full border-none bg-transparent" onNavigate={() => setIsSidebarOpen(false)} />
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
             <div className="hidden lg:block w-[60px] shrink-0 border border-stable rounded-[4px] z-50 overflow-hidden">
                 <Sidebar className="w-full h-full border-none bg-dark-panel backdrop-blur-xl" />
             </div>
 
-            <div className="flex flex-1 overflow-hidden gap-[10px]">
+            <div className="flex flex-1 min-w-0 overflow-hidden gap-[10px]">
                 <div className="flex-1 flex flex-col min-w-0 bg-deep-black border border-stable rounded-[4px] relative overflow-hidden transition-all hover:border-primary">
+                    <button
+                        type="button"
+                        onClick={() => setIsSidebarOpen(true)}
+                        className="lg:hidden absolute left-3 top-3 z-[70] flex h-10 w-10 items-center justify-center rounded-sm border border-primary/20 bg-black/80 text-primary/70 backdrop-blur-sm transition-colors hover:border-primary/50 hover:text-primary"
+                        aria-label="Open navigation menu"
+                    >
+                        <Menu size={18} />
+                    </button>
+
                     <TacticalHeader />
-                    <main className="flex-1 flex flex-col min-w-0 bg-[#0a0a05] relative overflow-hidden">
+                    <main className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#0a0a05] relative overflow-hidden">
                         <div className="absolute inset-0 pointer-events-none">
                             <div className="absolute top-0 left-1/4 w-px h-full bg-primary/5"></div>
                             <div className="absolute top-0 left-3/4 w-px h-full bg-primary/5"></div>
                             <div className="absolute top-1/2 left-0 w-full h-px bg-primary/5"></div>
                         </div>
 
-                        <div className="flex-1 overflow-hidden relative">
+                        <div className="flex-1 min-h-0 overflow-hidden relative">
                             <AnimatePresence mode="wait">
                                 <motion.div
                                     key={pathname}
@@ -161,7 +254,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                                     }}
                                     className={cn(
                                         "h-full w-full custom-scrollbar relative z-10 overflow-y-auto",
-                                        !['/dashboard', '/operations', '/kanban', '/notes', '/timers', '/archive', '/expeditions', '/calendar'].includes(pathname) && "p-8"
+                                        showPagePadding && "p-8"
                                     )}
                                 >
                                     {children}
@@ -169,25 +262,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                             </AnimatePresence>
                         </div>
 
-                        {pathname !== '/dashboard' && 
-                         pathname !== '/operations' && 
-                         pathname !== '/kanban' && 
-                         pathname !== '/archive' && 
-                         pathname !== '/expeditions' && 
-                         pathname !== '/calendar' && 
-                         pathname !== '/notes' && 
-                         pathname !== '/timers' && 
-                         <HardwareHUD />}
+                        {showHardwareHud && <HardwareHUD />}
                         <OmniSearch />
                         <TacticalContextMenu />
-                        <ModuleInitModal 
-                            isOpen={isNewProjectModalOpen} 
-                            onClose={() => setIsNewProjectModalOpen(false)} 
+                        <ModuleInitModal
+                            isOpen={isNewProjectModalOpen}
+                            onClose={() => setIsNewProjectModalOpen(false)}
                         />
                     </main>
                 </div>
 
-                {!['/dashboard', '/operations', '/kanban', '/tasks', '/timers', '/expeditions'].includes(pathname) && (
+                {showDesktopInbox && (
                     <div className="relative flex h-full shrink-0">
                         <aside className={cn(
                             "hidden xl:flex flex-col border border-stable bg-dark-panel rounded-[4px] z-40 transition-all duration-300 ease-in-out hover:border-primary relative overflow-hidden",
@@ -196,8 +281,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                             <GlobalInbox />
                         </aside>
 
-                        {/* Toggle Button */}
-                        <button 
+                        <button
                             onClick={() => {
                                 setInboxCollapsed(!inboxCollapsed);
                                 ArkanAudio.playFast('key_tick_mechanical');
@@ -217,3 +301,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
     );
 }
+
+
+
+
+

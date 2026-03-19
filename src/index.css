@@ -1,4 +1,4 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 
 @theme {
   --color-primary: #ffff00;
@@ -26,7 +26,7 @@
   text-shadow: none;
 }
 
-/* Regra específica para o Editor de Notas (textarea invisível) */
+/* Regra especÃ­fica para o Editor de Notas (textarea invisÃ­vel) */
 textarea.selection-yellow::selection {
   background-color: rgba(255, 255, 0, 0.99);
   color: #000000;
@@ -34,7 +34,7 @@ textarea.selection-yellow::selection {
 
 /* MARKDOWN_MARKER_PROTOCOL */
 .md-marker {
-  opacity: 0.15; /* Símbolos Markdown ficam quase invisíveis para focar no conteúdo */
+  opacity: 0.15; /* SÃ­mbolos Markdown ficam quase invisÃ­veis para focar no conteÃºdo */
   font-weight: normal;
 }
 
@@ -44,11 +44,7 @@ textarea.selection-yellow::selection {
   text-shadow: 0 0 12px rgba(255, 255, 0, 0.7); /* Efeito Bloom Intenso */
 }
 
-/* Garante que o cursor não saia do lugar */
-.flex.items-center {
-  height: 24px !important;
-}
-
+/* Garante que o cursor nÃ£o saia do lugar */
 body {
   background-color: var(--color-background);
   color: var(--color-foreground);
@@ -247,3 +243,55 @@ body {
   animation: glitch-fade-out 0.4s ease-out forwards;
 }
 
+
+
+.md-line {
+  position: relative;
+  min-height: 24px;
+  line-height: 24px;
+  display: flex;
+  align-items: center;
+}
+
+.md-line[data-active="true"] {
+  background: linear-gradient(90deg, rgba(255, 255, 0, 0.08), rgba(255, 255, 0, 0.02) 55%, transparent 100%);
+  box-shadow: inset 2px 0 0 rgba(255, 255, 0, 0.6);
+}
+
+.md-line[data-active="true"] .md-marker {
+  opacity: 1;
+  text-shadow: 0 0 10px rgba(249, 249, 6, 0.35);
+}
+
+.md-inline-code {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border: 1px solid rgba(255, 255, 0, 0.18);
+  background: rgba(255, 255, 0, 0.06);
+  color: #fff36a;
+  text-shadow: 0 0 8px rgba(255, 255, 0, 0.2);
+}
+
+.md-code-line {
+  border-left: 1px solid rgba(255, 255, 0, 0.18);
+  border-right: 1px solid rgba(255, 255, 0, 0.18);
+  background: rgba(8, 8, 2, 0.94);
+}
+
+.md-code-line-start {
+  margin-top: 12px;
+  border-top: 1px solid rgba(255, 255, 0, 0.22);
+  background: linear-gradient(180deg, rgba(255, 255, 0, 0.1), rgba(255, 255, 0, 0.03));
+  box-shadow: 0 0 18px rgba(255, 255, 0, 0.08);
+}
+
+.md-code-line-end {
+  border-bottom: 1px solid rgba(255, 255, 0, 0.22);
+  margin-bottom: 12px;
+  background: linear-gradient(0deg, rgba(255, 255, 0, 0.08), rgba(255, 255, 0, 0.02));
+}
+
+.md-code-line[data-active="true"] {
+  background: linear-gradient(90deg, rgba(255, 255, 0, 0.12), rgba(255, 255, 0, 0.03) 55%, rgba(8, 8, 2, 0.94));
+}

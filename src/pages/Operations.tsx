@@ -1,554 +1,802 @@
-import React, { useEffect, useState, useMemo } from "react";
+
+import React, { useEffect, useMemo, useState } from "react";
 import {
-  Square,
-  LayoutGrid,
   Activity,
-  Cpu,
-  Signal,
-  Database,
-  Search,
-  Plus,
   ArrowLeft,
-  Zap,
   Clock,
-  Trash2
+  Command,
+  Cpu,
+  Database,
+  LayoutGrid,
+  List,
+  Plus,
+  Search,
+  Signal,
+  Square,
+  Trash2,
+  Zap,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { GlobalInbox } from "@/components/layout/GlobalInbox";
 import { cn } from "@/lib/utils";
 import { ArkanAudio } from "@/lib/audio/ArkanAudio";
-import { useProjectStore } from "@/store/useProjectStore";
+import { useProjectStore, Project } from "@/store/useProjectStore";
 import { useDialogStore } from "@/store/useDialogStore";
-import { SharedProjectCard } from "@/components/ui/SharedProjectCard";
 import { TechnicalGridBackground } from "@/components/ui/TechnicalGridBackground";
-import { ProjectHeaderBar, TelemetryStatusCard, CollaboratorsCard } from "@/components/ui/ProjectShared";
 import { ModuleInitModal } from "@/components/ui/ModuleInitModal";
+import { useTaskStore, Task } from "@/store/useTaskStore";
+import { useChronosStore } from "@/store/useChronosStore";
+import { useHardwareMetrics } from "@/store/useHardwareMetrics";
 
-import { useTaskStore } from "@/store/useTaskStore";
+function formatRuntime(startedAt: number, now: number = Date.now()) {
+  const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const hours = String(Math.floor(elapsed / 3600)).padStart(2, "0");
+  const minutes = String(Math.floor((elapsed % 3600) / 60)).padStart(2, "0");
+  const seconds = String(elapsed % 60).padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function formatClock(now: number) {
+  return new Date(now).toLocaleTimeString("en-US", { hour12: false });
+}
 
 function useOperationsEngine() {
   const { projects } = useProjectStore();
   const { tasks, updateTask, addTask } = useTaskStore();
-  const [activeView, setActiveView] = useState<'GRID' | 'PROJECT_EXPANDED'>('GRID');
+  const { heartbeatMs, cpuUsage, memUsage, netSpeed, tick } = useChronosStore();
+  const { metrics, updateMetrics } = useHardwareMetrics();
+  const [activeView, setActiveView] = useState<"GRID" | "PROJECT_EXPANDED">("GRID");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [taskViewMode, setTaskViewMode] = useState<'LIST' | 'KANBAN' | 'GRID'>('KANBAN');
+  const [taskViewMode, setTaskViewMode] = useState<"LIST" | "KANBAN" | "GRID">("KANBAN");
   const [isLoading, setIsLoading] = useState(true);
-  const [metrics, setMetrics] = useState({
-    heartbeatMs: 53,
-    uptime: new Date().getTime(),
-    sessionStartTime: new Date().getTime()
-  });
+  const [now, setNow] = useState(() => Date.now());
+  const [sessionStartTime] = useState(() => Date.now());
 
-  const initialize = () => {
-    setTimeout(() => setIsLoading(false), 800);
-  };
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setIsLoading(false), 650);
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
+  useEffect(() => {
+    let cycle = 0;
+    const intervalId = window.setInterval(() => {
+      setNow(Date.now());
+      tick();
+      cycle += 1;
+      if (cycle % 4 === 0) {
+        updateMetrics();
+      }
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [tick, updateMetrics]);
+
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === selectedProjectId) ?? null,
+    [projects, selectedProjectId]
+  );
+
+  const projectTasks = useMemo(
+    () => tasks.filter((task) => task.projectId === selectedProjectId),
+    [tasks, selectedProjectId]
+  );
 
   const expandProject = (id: string) => {
     setSelectedProjectId(id);
-    setActiveView('PROJECT_EXPANDED');
+    setActiveView("PROJECT_EXPANDED");
   };
 
   const returnToGrid = () => {
     setSelectedProjectId(null);
-    setActiveView('GRID');
+    setActiveView("GRID");
   };
 
   return {
     state: {
       projects,
       tasks,
-      systemStatus: 'OPTIMAL',
+      selectedProject,
+      projectTasks,
+      systemStatus: "OPTIMAL",
       activeView,
       selectedProjectId,
       taskViewMode,
-      isLoading
+      isLoading,
+      metrics,
+      heartbeatMs,
+      cpuUsage,
+      memUsage,
+      netSpeed,
+      now,
+      sessionStartTime,
     },
     actions: {
       setTaskViewMode,
       updateTask,
-      addTask
+      addTask,
+      expandProject,
+      returnToGrid,
     },
-    metrics,
-    initialize,
-    expandProject,
-    returnToGrid
   };
 }
 
+type OperationsProjectNodeProps = {
+  project: Project;
+  taskCount: number;
+  activeCount: number;
+  onOpen: (id: string) => void;
+  onDelete: (event: React.MouseEvent, id: string, name: string) => void;
+};
+
+function OperationsProjectNode({ project, taskCount, activeCount, onOpen, onDelete }: OperationsProjectNodeProps) {
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(project.id)}
+      onMouseEnter={() => ArkanAudio.play("ui_hover_shimmer")}
+      className="group relative flex min-h-[220px] flex-col overflow-hidden border border-primary/15 bg-[#050502] p-5 text-left transition-all hover:border-primary/45 hover:bg-primary/5"
+    >
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-[9px] uppercase tracking-[0.22em] text-primary/35">{project.technicalId}</div>
+          <h3 className="mt-2 text-sm font-semibold uppercase tracking-[0.18em] text-white group-hover:text-primary">{project.name}</h3>
+          <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-primary/45">{project.status ?? 'ROUTINE'}</div>
+          {project.description ? <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-white/22">{project.description}</div> : null}
+        </div>
+        <button
+          type="button"
+          onClick={(event) => onDelete(event, project.id, project.name)}
+          className="rounded-sm border border-primary/15 p-2 text-primary/45 transition hover:border-primary/40 hover:text-primary"
+        >
+          <Trash2 size={14} />
+        </button>
+      </div>
+
+      <div className="mt-5 flex items-center justify-between text-[10px] uppercase tracking-[0.18em] text-white/28">
+        <span>Active_Modules</span>
+        <span className="text-primary">{activeCount}</span>
+      </div>
+      <div className="mt-2 h-1 bg-white/5">
+        <div className="h-full bg-primary shadow-[0_0_10px_rgba(255,255,0,0.45)]" style={{ width: `${project.progress}%` }} />
+      </div>
+
+      <div className="mt-6 grid grid-cols-2 gap-3 text-[10px] uppercase tracking-[0.18em] text-white/35">
+        <div className="border border-primary/10 p-3">
+          <div>Total_Tasks</div>
+          <div className="mt-2 text-lg font-semibold text-primary">{taskCount}</div>
+        </div>
+        <div className="border border-primary/10 p-3">
+          <div>Progress</div>
+          <div className="mt-2 text-lg font-semibold text-primary">{project.progress}%</div>
+        </div>
+      </div>
+
+      <div className="mt-auto pt-6 text-[10px] uppercase tracking-[0.22em] text-primary/55">Open_Module_Stream</div>
+    </button>
+  );
+}
 export default function OperationsPage() {
-  const { state, actions, metrics, initialize, expandProject, returnToGrid } = useOperationsEngine();
-  const { projects, tasks, systemStatus, activeView, selectedProjectId, taskViewMode, isLoading } = state;
-  const { setTaskViewMode, updateTask, addTask } = actions;
+  const { state, actions } = useOperationsEngine();
+  const {
+    projects,
+    selectedProject,
+    projectTasks,
+    systemStatus,
+    activeView,
+    selectedProjectId,
+    taskViewMode,
+    isLoading,
+    metrics,
+    heartbeatMs,
+    cpuUsage,
+    memUsage,
+    netSpeed,
+    now,
+    sessionStartTime,
+  } = state;
+  const { setTaskViewMode, updateTask, addTask, expandProject, returnToGrid } = actions;
+
   const [searchQuery, setSearchQuery] = useState("");
+  const [operationQuery, setOperationQuery] = useState("");
+  const [quickBuffer, setQuickBuffer] = useState(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+    return window.localStorage.getItem("arkan-operations-quick-buffer") ?? "";
+  });
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
+  const [sessionId] = useState(() => `${Date.now()}-${Math.floor(Math.random() * 9000) + 1000}`);
   const [sessionLogs, setSessionLogs] = useState<string[]>([
-    "[14:02:11] SYNCING_FILES... SUCCESS",
-    "[14:05:48] COMPILING_ASSETS_v2.0.4... 100%",
-    "[14:10:22] CACHE_CLEARED_ID_7718",
-    "[14:15:33] PUSHING_TO_EDGE_NODES... ACTIVE"
+    "SYSTEM_HEARTBEAT_ACKNOWLEDGED",
+    "CACHE_LAYER_SYNCHRONIZED",
+    "EDGE_NODE_LINK_STABLE",
+    "ACTIVE_STREAM_READY",
   ]);
 
-  const addLog = (msg: string) => {
-    const time = new Date().toLocaleTimeString('en-US', { hour12: false });
-    setSessionLogs(prev => [...prev, `[${time}] ${msg}`].slice(-10));
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("arkan-operations-quick-buffer", quickBuffer);
+    }
+  }, [quickBuffer]);
+
+  const addLog = (message: string) => {
+    const timestamp = formatClock(Date.now());
+    setSessionLogs((previous) => [`[${timestamp}] ${message}`, ...previous].slice(0, 6));
   };
 
-  useEffect(() => {
-    initialize();
-  }, []);
-
   const handleInitProject = () => {
-    ArkanAudio.playFast('system_engage');
+    ArkanAudio.playFast("system_engage");
     setIsNewProjectModalOpen(true);
   };
 
-  const handleDeleteProject = (e: React.MouseEvent, id: string, name: string) => {
-    e.stopPropagation();
-    ArkanAudio.playFast('system_engage');
+  const handleDeleteProject = (event: React.MouseEvent, id: string, name: string) => {
+    event.stopPropagation();
+    ArkanAudio.playFast("system_engage");
     useDialogStore.getState().openDialog({
       title: `PURGE PROTOCOL // ${name}`,
       confirmLabel: "PURGE_DATA",
       hideInput: true,
       onConfirm: async () => {
         await useProjectStore.getState().deleteProject(id);
-        ArkanAudio.playFast('system_purge');
-      }
+        addLog(`PROJECT_${id}_PURGED`);
+        ArkanAudio.playFast("system_purge");
+      },
     });
   };
 
   const filteredProjects = useMemo(() => {
-    if (!searchQuery) return projects;
-    return projects.filter(p =>
-      p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.technicalId.toLowerCase().includes(searchQuery.toLowerCase())
+    if (!searchQuery.trim()) {
+      return projects;
+    }
+
+    const normalizedQuery = searchQuery.toLowerCase();
+    return projects.filter(
+      (project) =>
+        project.name.toLowerCase().includes(normalizedQuery) ||
+        project.technicalId.toLowerCase().includes(normalizedQuery)
     );
   }, [projects, searchQuery]);
 
-  const selectedProject = projects.find(p => p.id === selectedProjectId);
-  const projectTasks = tasks.filter(t => t.projectId === selectedProjectId);
-  
-  // Calculate real-time progress based on tasks
-  const completedTasks = projectTasks.filter(t => t.status === 'completed').length;
-  const totalTasks = projectTasks.length;
-  const progressPercentage = totalTasks === 0 ? (selectedProject?.progress || 0) : Math.round((completedTasks / totalTasks) * 100);
+  const filteredProjectTasks = useMemo(() => {
+    if (!operationQuery.trim()) {
+      return projectTasks;
+    }
+
+    const normalizedQuery = operationQuery.toLowerCase();
+    return projectTasks.filter(
+      (task) =>
+        task.title.toLowerCase().includes(normalizedQuery) ||
+        task.description?.toLowerCase().includes(normalizedQuery)
+    );
+  }, [operationQuery, projectTasks]);
+
+  const completedTasks = projectTasks.filter((task) => task.status === "completed").length;
+  const inProgressTasks = projectTasks.filter((task) => task.status === "in-progress").length;
+  const progressPercentage = projectTasks.length === 0
+    ? selectedProject?.progress ?? 0
+    : Math.round((completedTasks / projectTasks.length) * 100);
+
+  const handleAddOperation = async () => {
+    if (!selectedProjectId || !selectedProject) {
+      return;
+    }
+
+    const title = quickBuffer.trim() || `OP_${selectedProject.technicalId}_${projectTasks.length + 1}`;
+    await addTask({
+      title,
+      description: quickBuffer.trim() || `Buffered for ${selectedProject.name}`,
+      status: "todo",
+      priority: "medium",
+      projectId: selectedProjectId,
+    });
+    addLog(`TASK_BUFFER_COMMITTED_TO_${selectedProject.technicalId}`);
+    ArkanAudio.playFast("system_engage");
+    setQuickBuffer("");
+  };
+
+  const handleToggleTaskStatus = async (task: Task) => {
+    const nextStatus = task.status === "completed" ? "todo" : "completed";
+    await updateTask(task.id, { status: nextStatus });
+    addLog(`TASK_${task.id.substring(0, 4)}_STATUS_UPDATED`);
+    ArkanAudio.playFast("system_execute_clack");
+  };
 
   return (
-    <div className="h-full flex flex-col relative overflow-hidden bg-black text-primary font-mono w-full">
-      {/* Background Grid */}
+    <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-black text-primary font-mono">
       <TechnicalGridBackground />
 
-      {/* MAIN CONTENT AREA */}
-      <div className="flex-1 flex overflow-hidden z-10 w-full">
-        {/* LEFT: GLOBAL INBOX */}
-        <aside className="w-80 border-r border-primary/10 bg-[#0a0a05]/60 backdrop-blur-sm flex flex-col shrink-0">
-          <GlobalInbox />
-        </aside>
+      <div className="relative z-10 flex h-full min-h-0 flex-col gap-4 p-6">
+        <div className="space-y-3 border-b border-primary/10 pb-4">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex flex-wrap items-center gap-4 text-[10px] uppercase tracking-[0.28em] text-white/35">
+              <span className="text-primary">System_Status: {systemStatus}</span>
+              <span>CPU: {metrics.cpu}%</span>
+              <span>MEM: {metrics.ram.toFixed(1)}GB</span>
+              <span>NET: {netSpeed}</span>
+            </div>
 
-        {/* CENTER: DYNAMIC VIEWPORT */}
-        <main className="flex-1 relative overflow-y-auto custom-scrollbar p-8 bg-black/40">
-          <AnimatePresence mode="wait">
-            {isLoading ? (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="flex flex-col items-center justify-center h-full gap-4 opacity-50"
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <label className="flex h-10 min-w-[300px] items-center gap-3 border border-primary/15 bg-black/80 px-3 text-primary/40 focus-within:border-primary/40 focus-within:text-primary/70">
+                <Search size={14} />
+                <input
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="SCAN_ACTIVE_OPERATIONS..."
+                  className="w-full bg-transparent text-[11px] uppercase tracking-[0.18em] text-white/70 outline-none placeholder:text-white/18"
+                />
+                <span className="inline-flex items-center gap-1 border border-primary/15 px-2 py-1 text-[9px] uppercase tracking-[0.2em] text-primary/55">
+                  <Command size={10} />
+                  K
+                </span>
+              </label>
+              <div className="inline-flex items-center gap-2 border border-primary/20 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-primary/80">
+                <Clock size={12} />
+                ARKAN_USER
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex flex-wrap items-center gap-6 text-[10px] uppercase tracking-[0.24em] text-white/28">
+              <span className="text-primary/80">System_Status: Operational</span>
+              <span className="text-red-400/80">ARK_CORE_DB: CRITICAL_ERROR</span>
+              <span className="inline-flex items-center gap-2"><Signal size={12} /> Latency: {Math.round(heartbeatMs)}ms</span>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="border border-primary/20 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-primary/70">Search CMD+K</div>
+              <button
+                type="button"
+                onClick={handleInitProject}
+                className="border border-primary/40 bg-primary px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-black transition hover:brightness-110"
               >
-                <Cpu className="h-12 w-12 animate-spin text-primary" />
-                <span className="text-xs tracking-[0.3em] animate-pulse">ESTABLISHING_UPLINK...</span>
-              </motion.div>
-            ) : activeView === 'GRID' ? (
-              <motion.div
-                key="grid"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 1.05 }}
-                transition={{ duration: 0.2 }}
-                className="space-y-8"
-              >
-                <header className="flex items-end justify-between border-b border-primary/20 pb-4">
+                + INIT_PROJECT
+              </button>
+            </div>
+          </div>
+        </div>
+        <AnimatePresence mode="wait">
+          {isLoading ? (
+            <motion.div
+              key="loading"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex flex-1 flex-col items-center justify-center gap-4 opacity-55"
+            >
+              <Cpu className="h-12 w-12 animate-spin text-primary" />
+              <span className="text-xs tracking-[0.3em]">ESTABLISHING_UPLINK...</span>
+            </motion.div>
+          ) : activeView === "GRID" ? (
+            <motion.div
+              key="grid"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.25 }}
+              className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[300px_minmax(0,1fr)_280px]"
+            >
+              <aside className="min-h-0 overflow-hidden border border-primary/10 bg-black/65">
+                <GlobalInbox />
+              </aside>
+
+              <section className="flex min-h-0 flex-col overflow-hidden border border-primary/10 bg-black/65">
+                <div className="flex items-center justify-between border-b border-primary/10 px-5 py-5">
                   <div>
-                    <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-3">
-                      ACTIVE PROJECTS
-                      <span className="text-[10px] font-mono bg-primary/10 text-primary px-2 py-0.5 rounded-full border border-primary/20">GRID_VIEW</span>
-                    </h1>
-                    <p className="text-slate-500 text-xs mt-1">
-                      Management of prioritized operational sequences
-                    </p>
+                    <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.24em] text-white">
+                      <LayoutGrid size={16} className="text-primary" />
+                      ACTIVE_OPERATIONS
+                    </div>
+                    <div className="mt-2 text-[10px] uppercase tracking-[0.22em] text-primary/45">Command_Center // Viewing active modules</div>
                   </div>
-                  <div className="flex items-center gap-2 text-[10px] text-primary/40">
+                  <div className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-primary/65">
                     <Square className="h-3 w-3 fill-primary" />
-                    <span>GRID_LAYOUT_ACTIVE</span>
+                    GRID_LAYOUT_ACTIVE
                   </div>
-                </header>
+                </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {filteredProjects.map(project => (
-                    <SharedProjectCard
-                      key={project.id}
-                      project={project}
-                      onExpand={expandProject}
-                      onDelete={handleDeleteProject}
-                      onHoverSound={() => ArkanAudio.play('ui_hover_shimmer')}
-                      variant="detailed"
+                <div className="border-b border-primary/10 px-5 py-4">
+                  <label className="flex h-11 items-center gap-3 border border-primary/15 bg-black/70 px-4 text-primary/40 focus-within:border-primary/40 focus-within:text-primary/70">
+                    <Search size={14} />
+                    <input
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder="SEARCH_ACTIVE_OPERATIONS..."
+                      className="w-full bg-transparent text-[11px] uppercase tracking-[0.18em] text-white/70 outline-none placeholder:text-white/18"
                     />
-                  ))}
+                  </label>
+                </div>
 
-                  {/* Add New Placeholder */}
+                <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+                    <button
+                      type="button"
+                      onClick={handleInitProject}
+                      onMouseEnter={() => ArkanAudio.play("ui_hover_shimmer")}
+                      className="group flex min-h-[220px] flex-col items-center justify-center border border-dashed border-primary/20 bg-black/40 text-primary/45 transition-all hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
+                    >
+                      <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-primary/30 group-hover:shadow-[0_0_18px_rgba(255,255,0,0.2)]">
+                        <Plus size={28} />
+                      </div>
+                      <div className="text-[11px] uppercase tracking-[0.24em]">INITIALIZE_NEW_MODULE</div>
+                    </button>
+
+                    {filteredProjects.map((project) => {
+                      const relatedTasks = project.id ? state.tasks.filter((task) => task.projectId === project.id) : [];
+                      const activeTasks = relatedTasks.filter((task) => task.status !== "completed").length;
+
+                      return (
+                        <OperationsProjectNode
+                          key={project.id}
+                          project={project}
+                          taskCount={relatedTasks.length}
+                          activeCount={activeTasks}
+                          onOpen={expandProject}
+                          onDelete={handleDeleteProject}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              </section>
+
+              <aside className="flex min-h-0 flex-col gap-4">
+                <div className="border border-primary/10 bg-black/70 p-5">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-primary/65">
+                    <Activity size={12} />
+                    SYSTEM_UPTIME
+                  </div>
+                  <div className="mt-4 text-[36px] font-semibold tracking-[0.08em] text-primary">{formatRuntime(sessionStartTime, now)}</div>
+                </div>
+
+                <div className="flex min-h-[260px] flex-1 flex-col border border-primary/10 bg-black/70">
+                  <div className="flex items-center justify-between border-b border-primary/10 px-4 py-3 text-[10px] uppercase tracking-[0.22em] text-primary/70">
+                    <span>QUICK_BUFFER</span>
+                    <span className="h-2 w-2 rounded-full bg-primary shadow-[0_0_10px_rgba(255,255,0,0.6)]" />
+                  </div>
+                  <textarea
+                    value={quickBuffer}
+                    onChange={(event) => setQuickBuffer(event.target.value)}
+                    placeholder="> ENTER_TEMPORAL_DATA..."
+                    className="h-full w-full resize-none bg-transparent px-4 py-4 text-[11px] uppercase tracking-[0.18em] text-white/60 outline-none placeholder:text-white/18"
+                  />
+                </div>
+
+                <div className="border border-primary/10 bg-black/70 p-5">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-primary/65">
+                    <Database size={12} />
+                    SESSION_ID
+                  </div>
+                  <div className="mt-4 text-[11px] uppercase tracking-[0.2em] text-white/35">{sessionId}</div>
+                </div>
+              </aside>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="detail"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.25 }}
+              className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[320px_minmax(0,1fr)_280px]"
+            >
+              <section className="flex min-h-0 flex-col overflow-hidden border border-primary/10 bg-black/65">
+                <div className="flex items-center justify-between border-b border-primary/10 bg-primary/5 px-5 py-4">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.24em] text-primary/75">OPERATIONS_LOG</div>
+                    <div className="mt-1 text-[9px] uppercase tracking-[0.18em] text-white/20">Priority segmented task stream</div>
+                  </div>
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-primary/60">{filteredProjectTasks.length}_ITEMS</div>
+                </div>
+
+                <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4 custom-scrollbar">
+                  {["critical", "high", "medium", "low"].map((priority) => {
+                    const priorityTasks = filteredProjectTasks.filter((task) => task.priority === priority);
+                    if (priorityTasks.length === 0) {
+                      return null;
+                    }
+
+                    return (
+                      <div key={priority} className="space-y-3">
+                        <div className="text-[10px] uppercase tracking-[0.24em] text-primary/40">Priority // {priority}</div>
+                        {priorityTasks.map((task) => (
+                          <div key={task.id} className="border border-primary/15 bg-primary/5 p-4 transition hover:border-primary/35">
+                            <div className="flex items-start gap-3">
+                              <input
+                                type="checkbox"
+                                checked={task.status === "completed"}
+                                onChange={() => void handleToggleTaskStatus(task)}
+                                className="mt-1 h-4 w-4 rounded border-primary bg-transparent text-primary focus:ring-primary focus:ring-offset-black"
+                              />
+                              <div className="flex-1">
+                                <div className={cn("text-[12px] font-semibold uppercase tracking-[0.14em]", task.status === "completed" ? "text-white/35 line-through" : "text-white/85")}>
+                                  {task.title}
+                                </div>
+                                <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-primary/35">{task.status} // {task.id.substring(0, 6)}</div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="border-t border-primary/10 p-4">
                   <button
-                    onClick={handleInitProject}
-                    onMouseEnter={() => ArkanAudio.play('ui_hover_shimmer')}
-                    className="bg-black/30 border border-dashed border-white/10 hover:border-primary/50 p-6 rounded-xl transition-all flex flex-col items-center justify-center text-slate-600 hover:text-primary cursor-pointer h-64 group"
+                    type="button"
+                    onClick={() => void handleAddOperation()}
+                    className="w-full border border-dashed border-primary/20 py-3 text-[10px] uppercase tracking-[0.24em] text-primary/60 transition hover:border-primary/45 hover:bg-primary/5 hover:text-primary"
                   >
-                    <Plus className="h-8 w-8 mb-2 group-hover:scale-110 transition-transform" />
-                    <span className="text-[10px] font-bold tracking-[0.2em] uppercase">INITIALIZE_NODE</span>
+                    + ADD_NEW_OPERATION
                   </button>
                 </div>
-                <div className="mt-12 grid grid-cols-4 gap-4">
-                  <div className="bg-[#1a1a0f] border border-white/5 p-4 rounded-lg">
-                    <p className="text-[10px] text-slate-500 font-mono mb-1">DATA_STREAM</p>
-                    <div className="h-12 w-full flex items-end gap-1">
-                      <div className="bg-primary/40 w-full h-[40%] rounded-sm"></div>
-                      <div className="bg-primary/60 w-full h-[60%] rounded-sm"></div>
-                      <div className="bg-primary w-full h-[90%] rounded-sm"></div>
-                      <div className="bg-primary/40 w-full h-[30%] rounded-sm"></div>
-                      <div className="bg-primary/70 w-full h-[70%] rounded-sm"></div>
+              </section>
+              <section className="flex min-h-0 flex-col overflow-hidden border border-primary/10 bg-black/65">
+                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-primary/10 px-5 py-4">
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={returnToGrid}
+                      className="flex h-9 w-9 items-center justify-center border border-primary/20 text-primary/65 transition hover:border-primary/45 hover:text-primary"
+                    >
+                      <ArrowLeft size={16} />
+                    </button>
+                    <div>
+                      <div className="text-[11px] uppercase tracking-[0.24em] text-white">{selectedProject?.name}</div>
+                      <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-primary/45">{selectedProject?.technicalId} // ACTIVE_TASK_STREAM</div>
                     </div>
                   </div>
-                  <div className="bg-[#1a1a0f] border border-white/5 p-4 rounded-lg flex flex-col justify-center">
-                    <p className="text-[10px] text-slate-500 font-mono mb-1">LOCAL_TIME</p>
-                    <p className="text-xl font-bold text-white tracking-widest">{new Date().toLocaleTimeString()}</p>
-                  </div>
-                  <div className="bg-[#1a1a0f] border border-white/5 p-4 rounded-lg flex flex-col justify-center">
-                    <p className="text-[10px] text-slate-500 font-mono mb-1">UPTIME</p>
-                    <p className="text-xl font-bold text-primary tracking-widest">{new Date(metrics.uptime).toISOString().substr(11, 8)}</p>
-                  </div>
-                  <div className="bg-[#1a1a0f] border border-white/5 p-4 rounded-lg overflow-hidden relative group">
-                    <div className="absolute inset-0 bg-primary opacity-0 group-hover:opacity-5 transition-opacity"></div>
-                    <p className="text-[10px] text-slate-500 font-mono mb-1">QUICK_NOTES</p>
-                    <p className="text-[10px] text-slate-300">Click to expand terminal...</p>
+
+                  <div className="flex items-center gap-2 border border-primary/15 bg-black/70 p-1">
+                    {[
+                      { id: "LIST", label: "LIST", icon: List },
+                      { id: "KANBAN", label: "KANBAN", icon: LayoutGrid },
+                      { id: "GRID", label: "GRID", icon: Square },
+                    ].map((mode) => (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        onClick={() => setTaskViewMode(mode.id as "LIST" | "KANBAN" | "GRID")}
+                        className={cn(
+                          "inline-flex items-center gap-2 px-3 py-2 text-[10px] uppercase tracking-[0.22em] transition-colors",
+                          taskViewMode === mode.id ? "bg-primary text-black" : "text-primary/55 hover:text-primary"
+                        )}
+                      >
+                        <mode.icon size={12} />
+                        {mode.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="detail"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.3 }}
-                className="h-full flex flex-col relative"
-              >
-                {selectedProject ? (
-                  <>
-                    {/* Top Bar */}
-                    <ProjectHeaderBar 
-                      projectName={selectedProject.name} 
-                      uptime={metrics.uptime} 
-                      onBack={returnToGrid} 
+
+                <div className="flex flex-wrap items-center gap-4 border-b border-primary/10 px-5 py-4">
+                  <label className="flex h-10 min-w-[280px] items-center gap-3 border border-primary/15 bg-black/70 px-4 text-primary/40 focus-within:border-primary/40 focus-within:text-primary/70">
+                    <Search size={14} />
+                    <input
+                      value={operationQuery}
+                      onChange={(event) => setOperationQuery(event.target.value)}
+                      placeholder="FILTER_PROJECT_STREAM..."
+                      className="w-full bg-transparent text-[11px] uppercase tracking-[0.18em] text-white/70 outline-none placeholder:text-white/18"
                     />
+                  </label>
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-primary/50">{filteredProjectTasks.length}_OPERATIONS_VISIBLE</div>
+                </div>
 
-                    {/* Main Workspace */}
-                    <div className="flex-1 flex gap-6 relative overflow-hidden">
-                      {/* Left Pane: Operations */}
-                      <section className="w-1/4 bg-[#1a1a0a]/50 rounded-lg border border-primary/10 flex flex-col relative overflow-hidden">
-                        <div className="p-4 border-b border-primary/10 flex justify-between items-center bg-primary/5">
-                          <h2 className="text-xs font-bold tracking-widest uppercase text-primary">Operations_Log</h2>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
-                          {['critical', 'high', 'medium', 'low'].map(priority => {
-                            const pTasks = projectTasks.filter(t => t.priority === priority);
-                            if (pTasks.length === 0) return null;
-                            return (
-                              <div key={priority} className="space-y-1">
-                                <label className="text-[10px] uppercase text-primary/40 font-bold">Priority: {priority}</label>
-                                {pTasks.map(task => (
-                                  <div key={task.id} className="flex items-start gap-3 bg-primary/5 border border-primary/20 p-3 rounded group cursor-pointer hover:bg-primary/10 transition-colors">
-                                    <input 
-                                      type="checkbox" 
-                                      checked={task.status === 'completed'} 
-                                      onChange={() => {
-                                        updateTask(task.id, { status: task.status === 'completed' ? 'todo' : 'completed' });
-                                        addLog(`TASK_${task.id.substring(0,4)}_STATUS_UPDATED`);
-                                      }}
-                                      className="mt-1 w-4 h-4 rounded border-primary bg-transparent text-primary focus:ring-primary focus:ring-offset-black" 
-                                    />
-                                    <div className="flex-1">
-                                      <p className={cn("text-sm font-medium", task.status === 'completed' ? "text-white/40 line-through" : "text-white/90")}>{task.title}</p>
-                                      <p className="text-[10px] text-primary/40 mt-1">Status: {task.status.toUpperCase()} // ID: {task.id.substring(0,6)}</p>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            );
-                          })}
-                          <div className="space-y-1 pt-4">
-                            <button className="w-full py-2 border border-dashed border-primary/20 rounded text-[10px] uppercase tracking-[0.2em] text-primary/60 hover:bg-primary/5 hover:text-primary transition-all">
-                              + ADD_NEW_OPERATION
-                            </button>
-                          </div>
-                        </div>
-                      </section>
+                <div className="min-h-0 flex-1 overflow-hidden">
+                  {taskViewMode === "KANBAN" && <KanbanView tasks={filteredProjectTasks} updateTask={updateTask} addLog={addLog} />}
+                  {taskViewMode === "LIST" && <ListView tasks={filteredProjectTasks} />}
+                  {taskViewMode === "GRID" && <GridView tasks={filteredProjectTasks} />}
+                </div>
+              </section>
 
-                      {/* Center Pane: Operations Hub */}
-                      <section className="flex-1 bg-[#1a1a0a]/50 rounded-lg border border-primary/10 flex flex-col relative overflow-hidden">
-                        <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-primary to-transparent opacity-20"></div>
-                        <div className="p-4 border-b border-primary/10 flex justify-between items-center">
-                          <div className="flex items-center gap-3">
-                            <h2 className="text-xs font-bold tracking-widest uppercase text-white/70">ACTIVE_TASK_STREAM</h2>
-                          </div>
-                          <div className="flex items-center gap-2 bg-black/50 p-1 rounded border border-primary/20">
-                            <button onClick={() => setTaskViewMode('LIST')} className={cn("px-3 py-1 text-[9px] font-bold tracking-widest transition-colors", taskViewMode === 'LIST' ? "bg-primary text-black" : "text-primary/60 hover:text-primary")}>LIST</button>
-                            <button onClick={() => setTaskViewMode('KANBAN')} className={cn("px-3 py-1 text-[9px] font-bold tracking-widest transition-colors", taskViewMode === 'KANBAN' ? "bg-primary text-black" : "text-primary/60 hover:text-primary")}>KANBAN</button>
-                            <button onClick={() => setTaskViewMode('GRID')} className={cn("px-3 py-1 text-[9px] font-bold tracking-widest transition-colors", taskViewMode === 'GRID' ? "bg-primary text-black" : "text-primary/60 hover:text-primary")}>GRID</button>
-                          </div>
-                        </div>
-                        
-                        <div className="flex-1 overflow-hidden flex flex-col">
-                          {taskViewMode === 'KANBAN' && <KanbanView tasks={projectTasks} updateTask={updateTask} addLog={addLog} />}
-                          {taskViewMode === 'LIST' && <ListView tasks={projectTasks} />}
-                          {taskViewMode === 'GRID' && <GridView tasks={projectTasks} />}
-                        </div>
-                      </section>
-
-                      {/* Right Pane: Analytics */}
-                      <section className="w-1/4 flex flex-col gap-6">
-                        <TelemetryStatusCard progress={progressPercentage} />
-
-                        {/* Completion Curve Visual */}
-                        <div className="flex-1 bg-[#1a1a0a]/50 rounded-lg border border-primary/10 p-5 flex flex-col">
-                          <h3 className="text-[10px] font-bold text-primary/60 uppercase tracking-widest mb-4">COMPLETION_CURVE</h3>
-                          <div className="flex-1 border-l border-b border-primary/20 relative">
-                            <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none">
-                              <path className="opacity-80" d="M0 80 Q 25 70, 50 45 T 100 20" fill="none" stroke="#f9f906" strokeWidth="2"></path>
-                              <path className="opacity-20" d="M0 80 Q 25 70, 50 45 T 100 20 L 100 100 L 0 100 Z" fill="url(#grad1)"></path>
-                              <defs>
-                                <linearGradient id="grad1" x1="0%" x2="0%" y1="0%" y2="100%">
-                                  <stop offset="0%" style={{ stopColor: '#f9f906', stopOpacity: 1 }}></stop>
-                                  <stop offset="100%" style={{ stopColor: '#f9f906', stopOpacity: 0 }}></stop>
-                                </linearGradient>
-                              </defs>
-                            </svg>
-                            <div className="absolute top-4 right-4 text-[10px] text-primary/40">TREND: POSITIVE</div>
-                          </div>
-                        </div>
-
-                        <CollaboratorsCard />
-                      </section>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex items-center justify-center h-full text-red-500 font-bold tracking-widest">MODULE_LOAD_ERROR</div>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </main>
-
-      </div>
-
-      <ModuleInitModal 
-        isOpen={isNewProjectModalOpen} 
-        onClose={() => setIsNewProjectModalOpen(false)} 
-      />
-    </div>
-  );
-}
-
-function KanbanView({ tasks, updateTask, addLog }: { tasks: any[], updateTask: any, addLog: any }) {
-  const todos = tasks.filter(t => t.status === 'todo');
-  const inProgress = tasks.filter(t => t.status === 'in-progress');
-  const completed = tasks.filter(t => t.status === 'completed');
-
-  const handleDragStart = (e: React.DragEvent, taskId: string) => {
-    e.dataTransfer.setData('text/plain', taskId);
-  };
-
-  const handleDrop = (e: React.DragEvent, status: string) => {
-    e.preventDefault();
-    const taskId = e.dataTransfer.getData('text/plain');
-    if (taskId) {
-      updateTask(taskId, { status });
-      addLog(`TASK_${taskId.substring(0,4)}_MOVED_TO_${status.toUpperCase()}`);
-      ArkanAudio.playFast('system_execute_clack');
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
-
-  return (
-    <div className="flex-1 flex gap-4 p-4 overflow-x-auto custom-scrollbar">
-      {/* TO_DO Column */}
-      <div 
-        className="flex-1 min-w-[280px] flex flex-col gap-4"
-        onDrop={(e) => handleDrop(e, 'todo')}
-        onDragOver={handleDragOver}
-      >
-        <div className="flex items-center gap-2 border-l-2 border-primary pl-3">
-          <h2 className="text-sm font-bold tracking-widest text-primary/80 uppercase">[ TO_DO ]</h2>
-          <span className="bg-primary/10 text-primary text-[10px] px-1.5 rounded">{todos.length}</span>
-        </div>
-        <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-1 custom-scrollbar">
-          {todos.map(task => (
-            <div 
-              key={task.id} 
-              draggable
-              onDragStart={(e) => handleDragStart(e, task.id)}
-              className="bg-[#11110a] border border-primary/20 p-3 hover:border-primary transition-all group relative cursor-grab active:cursor-grabbing"
-              data-context-target={task.id}
-              data-context-type="TASK"
-              data-context-name={task.title}
-            >
-              <div className="absolute top-0 right-0 p-1 text-[8px] text-primary/30 font-mono italic">{task.id.substring(0,6)}</div>
-              <div className="flex gap-3">
-                <div className="w-1 bg-primary self-stretch"></div>
-                <div className="flex-1">
-                  <h3 className="font-bold text-sm text-white group-hover:text-primary transition-colors">{task.title}</h3>
-                  <div className="flex items-center gap-2 mt-2">
-                    <span className="text-[9px] border border-primary/40 text-primary/80 px-1 rounded uppercase">{task.priority}</span>
+              <aside className="flex min-h-0 flex-col gap-4">
+                <div className="border border-primary/10 bg-black/70 p-5">
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-primary/65">MISSION_PROGRESS</div>
+                  <div className="mt-4 text-[34px] font-semibold tracking-[0.08em] text-primary">{progressPercentage}%</div>
+                  <div className="mt-3 h-1 bg-white/5">
+                    <div className="h-full bg-primary shadow-[0_0_10px_rgba(255,255,0,0.45)]" style={{ width: `${progressPercentage}%` }} />
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-[10px] uppercase tracking-[0.18em] text-white/35">
+                    <div className="border border-primary/10 p-3">Completed<div className="mt-2 text-lg text-primary">{completedTasks}</div></div>
+                    <div className="border border-primary/10 p-3">In_Progress<div className="mt-2 text-lg text-primary">{inProgressTasks}</div></div>
                   </div>
                 </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
 
-      {/* IN_PROGRESS Column */}
-      <div 
-        className="flex-1 min-w-[280px] flex flex-col gap-4"
-        onDrop={(e) => handleDrop(e, 'in-progress')}
-        onDragOver={handleDragOver}
-      >
-        <div className="flex items-center gap-2 border-l-2 border-primary pl-3">
-          <h2 className="text-sm font-bold tracking-widest text-primary/80 uppercase">[ IN_PROGRESS ]</h2>
-          <span className="bg-primary text-black text-[10px] px-1.5 font-bold rounded">{inProgress.length}</span>
-        </div>
-        <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-1 custom-scrollbar">
-          {inProgress.map(task => (
-            <div 
-              key={task.id} 
-              draggable
-              onDragStart={(e) => handleDragStart(e, task.id)}
-              className="bg-primary/5 border-2 border-primary p-3 relative overflow-hidden cursor-grab active:cursor-grabbing"
-              data-context-target={task.id}
-              data-context-type="TASK"
-              data-context-name={task.title}
-            >
-              <div className="absolute top-0 right-0 p-1 text-[8px] text-primary font-mono italic">{task.id.substring(0,6)}</div>
-              <div className="absolute inset-0 bg-[linear-gradient(transparent_50%,rgba(255,255,0,0.05)_50%)] bg-[length:100%_4px] pointer-events-none"></div>
-              <div className="flex gap-3 relative z-10">
-                <div className="w-1 bg-primary self-stretch animate-pulse"></div>
-                <div className="flex-1">
-                  <h3 className="font-bold text-sm text-primary">{task.title}</h3>
-                  <div className="flex items-center gap-2 mt-2">
-                    <span className="text-[9px] bg-primary text-black px-1 rounded font-bold uppercase tracking-tighter">Active Ops</span>
-                    <span className="text-[9px] text-primary uppercase font-bold">{task.priority}</span>
+                <div className="flex-1 border border-primary/10 bg-black/70 p-5">
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-primary/65">COMPLETION_CURVE</div>
+                  <div className="relative mt-5 h-40 border-l border-b border-primary/15">
+                    <svg className="absolute inset-0 h-full w-full" preserveAspectRatio="none">
+                      <path d="M0 120 Q 70 100, 130 82 T 260 28" fill="none" stroke="#f9f906" strokeWidth="2" />
+                      <path d="M0 120 Q 70 100, 130 82 T 260 28 L 260 140 L 0 140 Z" fill="url(#operations-progress)" opacity="0.18" />
+                      <defs>
+                        <linearGradient id="operations-progress" x1="0%" x2="0%" y1="0%" y2="100%">
+                          <stop offset="0%" stopColor="#f9f906" />
+                          <stop offset="100%" stopColor="#f9f906" stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                    </svg>
+                    <div className="absolute right-3 top-3 text-[10px] uppercase tracking-[0.18em] text-primary/40">TREND: POSITIVE</div>
                   </div>
                 </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
 
-      {/* COMPLETED Column */}
-      <div 
-        className="flex-1 min-w-[280px] flex flex-col gap-4"
-        onDrop={(e) => handleDrop(e, 'completed')}
-        onDragOver={handleDragOver}
-      >
-        <div className="flex items-center gap-2 border-l-2 border-primary/40 pl-3">
-          <h2 className="text-sm font-bold tracking-widest text-primary/40 uppercase">[ COMPLETED ]</h2>
-          <span className="bg-primary/5 text-primary/40 text-[10px] px-1.5 rounded">{completed.length}</span>
-        </div>
-        <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-1 custom-scrollbar opacity-60 hover:opacity-100 transition-opacity">
-          {completed.map(task => (
-            <div 
-              key={task.id} 
-              draggable
-              onDragStart={(e) => handleDragStart(e, task.id)}
-              className="bg-black border border-primary/10 p-3 grayscale group relative cursor-grab active:cursor-grabbing"
-              data-context-target={task.id}
-              data-context-type="TASK"
-              data-context-name={task.title}
-            >
-              <div className="absolute top-2 right-2 text-primary/20"><Zap className="w-3 h-3" /></div>
-              <div className="flex gap-3">
-                <div className="w-1 bg-green-500/50 self-stretch"></div>
-                <div className="flex-1">
-                  <h3 className="font-bold text-sm text-white/50 line-through">{task.title}</h3>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-[8px] text-primary/20 uppercase tracking-widest">Operation_Closed</span>
-                  </div>
+                <div className="border border-primary/10 bg-black/70 p-5">
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-primary/65">QUICK_BUFFER</div>
+                  <textarea
+                    value={quickBuffer}
+                    onChange={(event) => setQuickBuffer(event.target.value)}
+                    placeholder="> BUFFER_NEW_OPERATION..."
+                    className="mt-4 h-28 w-full resize-none bg-transparent text-[11px] uppercase tracking-[0.18em] text-white/60 outline-none placeholder:text-white/18"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleAddOperation()}
+                    className="mt-4 w-full border border-primary/35 bg-primary px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.24em] text-black transition hover:brightness-110"
+                  >
+                    Commit_To_Stream
+                  </button>
                 </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+              </aside>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-function ListView({ tasks }: { tasks: any[] }) {
-  return (
-    <div className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-2">
-      {tasks.map(task => (
-        <div 
-          key={task.id} 
-          className="flex items-center gap-4 bg-[#11110a] border border-primary/20 p-4 hover:border-primary transition-colors group"
-          data-context-target={task.id}
-          data-context-type="TASK"
-          data-context-name={task.title}
-        >
-          <div className={cn("w-2 h-2 rounded-full", task.status === 'completed' ? "bg-green-500" : task.status === 'in-progress' ? "bg-primary animate-pulse" : "bg-primary/40")}></div>
-          <div className="flex-1">
-            <h4 className={cn("text-sm font-bold tracking-wide", task.status === 'completed' ? "text-white/40 line-through" : "text-white group-hover:text-primary")}>{task.title}</h4>
-            {task.description && <p className="text-[10px] text-primary/60 mt-1 line-clamp-1">{task.description}</p>}
+        <footer className="grid gap-4 border-t border-primary/10 pt-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,0.7fr)_minmax(0,0.4fr)]">
+          <div className="border border-primary/10 bg-black/70 px-4 py-4">
+            <div className="mb-3 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-primary/65">
+              <span>SESSION_LOGS</span>
+              <span className="text-white/22">SYSTEM_HEARTBEAT</span>
+            </div>
+            <div className="space-y-2">
+              {sessionLogs.map((log) => (
+                <div key={log} className="text-[10px] uppercase tracking-[0.16em] text-white/45">&gt; {log}</div>
+              ))}
+            </div>
           </div>
-          <div className="flex items-center gap-4">
-            <span className="text-[9px] border border-primary/20 px-2 py-1 rounded uppercase text-primary/60">{task.priority}</span>
-            <span className="text-[10px] text-primary/40 uppercase w-24 text-right">{task.status}</span>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="border border-primary/10 bg-black/70 px-4 py-4">
+              <div className="text-[10px] uppercase tracking-[0.22em] text-primary/65">CPU_CORE_LOAD</div>
+              <div className="mt-3 text-[28px] font-semibold tracking-[0.08em] text-primary">{cpuUsage}%</div>
+              <div className="mt-3 h-1 bg-white/5"><div className="h-full w-[42%] bg-primary shadow-[0_0_10px_rgba(255,255,0,0.45)]" /></div>
+            </div>
+            <div className="border border-primary/10 bg-black/70 px-4 py-4">
+              <div className="text-[10px] uppercase tracking-[0.22em] text-primary/65">MEMORY_POOL</div>
+              <div className="mt-3 text-[28px] font-semibold tracking-[0.08em] text-primary">{memUsage}</div>
+              <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-white/35">Clock: {formatClock(now)}</div>
+            </div>
+          </div>
+
+          <div className="border border-primary/10 bg-primary/8 px-4 py-4">
+            <div className="text-[10px] uppercase tracking-[0.22em] text-primary/65">UPLINK_STATUS</div>
+            <div className="mt-3 text-[22px] font-semibold tracking-[0.08em] text-primary">DATA_SYNC</div>
+            <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-white/35">Nominal</div>
+          </div>
+        </footer>
+      </div>
+
+      <ModuleInitModal isOpen={isNewProjectModalOpen} onClose={() => setIsNewProjectModalOpen(false)} />
+    </div>
+  );
+}
+function KanbanView({
+  tasks,
+  updateTask,
+  addLog,
+}: {
+  tasks: Task[];
+  updateTask: (id: string, updates: Partial<Task>) => Promise<void>;
+  addLog: (message: string) => void;
+}) {
+  const todos = tasks.filter((task) => task.status === "todo");
+  const inProgress = tasks.filter((task) => task.status === "in-progress");
+  const completed = tasks.filter((task) => task.status === "completed");
+
+  const handleDragStart = (event: React.DragEvent, taskId: string) => {
+    event.dataTransfer.setData("text/plain", taskId);
+  };
+
+  const handleDrop = async (event: React.DragEvent, status: string) => {
+    event.preventDefault();
+    const taskId = event.dataTransfer.getData("text/plain");
+    if (!taskId) {
+      return;
+    }
+
+    await updateTask(taskId, { status });
+    addLog(`TASK_${taskId.substring(0, 4)}_MOVED_TO_${status.toUpperCase()}`);
+    ArkanAudio.playFast("system_execute_clack");
+  };
+
+  return (
+    <div className="flex h-full gap-4 overflow-x-auto p-4 custom-scrollbar">
+      {[
+        { id: "todo", label: "TO_DO", items: todos, accent: "border-primary text-primary/80" },
+        { id: "in-progress", label: "IN_PROGRESS", items: inProgress, accent: "border-primary text-primary" },
+        { id: "completed", label: "COMPLETED", items: completed, accent: "border-primary/35 text-primary/40" },
+      ].map((column) => (
+        <div
+          key={column.id}
+          className="flex min-w-[280px] flex-1 flex-col gap-4"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => void handleDrop(event, column.id)}
+        >
+          <div className={cn("border-l-2 pl-3", column.accent)}>
+            <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.22em]">
+              <span>[ {column.label} ]</span>
+              <span className="border border-primary/15 bg-primary/5 px-2 py-0.5 text-[10px] text-primary/60">{column.items.length}</span>
+            </div>
+          </div>
+
+          <div className="flex flex-1 flex-col gap-3 overflow-y-auto pr-1 custom-scrollbar">
+            {column.items.map((task) => (
+              <div
+                key={task.id}
+                draggable
+                onDragStart={(event) => handleDragStart(event, task.id)}
+                className={cn(
+                  "cursor-grab border p-4 transition active:cursor-grabbing",
+                  task.status === "in-progress" ? "border-primary bg-primary/8" : task.status === "completed" ? "border-primary/10 bg-black/60 opacity-65" : "border-primary/15 bg-[#090903] hover:border-primary/35"
+                )}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className={cn("text-[12px] font-semibold uppercase tracking-[0.14em]", task.status === "completed" ? "text-white/35 line-through" : "text-white/85")}>{task.title}</div>
+                    <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-primary/35">{task.priority} // {task.id.substring(0, 6)}</div>
+                  </div>
+                  <Zap size={14} className={cn(task.status === "in-progress" ? "text-primary" : "text-primary/25")} />
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       ))}
-      {tasks.length === 0 && (
-        <div className="text-center text-primary/40 text-xs py-10 tracking-widest uppercase">NO_ACTIVE_TASKS_FOUND</div>
-      )}
     </div>
   );
 }
 
-function GridView({ tasks }: { tasks: any[] }) {
+function ListView({ tasks }: { tasks: Task[] }) {
   return (
-    <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-      <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
-        {tasks.map(task => (
-          <div 
-            key={task.id} 
-            className="bg-[#11110a] border border-primary/20 p-4 rounded hover:border-primary transition-colors flex flex-col gap-4"
-            data-context-target={task.id}
-            data-context-type="TASK"
-            data-context-name={task.title}
-          >
-            <div className="flex justify-between items-start">
-              <span className="text-[8px] text-primary/40 font-mono italic">{task.id.substring(0,8)}</span>
-              <div className={cn("w-1.5 h-1.5 rounded-full", task.status === 'completed' ? "bg-green-500" : task.status === 'in-progress' ? "bg-primary animate-pulse" : "bg-primary/40")}></div>
+    <div className="h-full space-y-2 overflow-y-auto p-5 custom-scrollbar">
+      {tasks.map((task) => (
+        <div key={task.id} className="flex items-center gap-4 border border-primary/15 bg-[#090903] px-4 py-4 transition hover:border-primary/35">
+          <div className={cn("h-2 w-2 rounded-full", task.status === "completed" ? "bg-green-500/70" : task.status === "in-progress" ? "bg-primary animate-pulse" : "bg-primary/40")} />
+          <div className="flex-1">
+            <div className={cn("text-[12px] font-semibold uppercase tracking-[0.14em]", task.status === "completed" ? "text-white/35 line-through" : "text-white/85")}>{task.title}</div>
+            {task.description ? <div className="mt-2 text-[10px] uppercase tracking-[0.16em] text-primary/35">{task.description}</div> : null}
+          </div>
+          <div className="text-right text-[10px] uppercase tracking-[0.18em] text-primary/45">
+            <div>{task.priority}</div>
+            <div className="mt-2">{task.status}</div>
+          </div>
+        </div>
+      ))}
+      {tasks.length === 0 ? <div className="py-12 text-center text-[10px] uppercase tracking-[0.24em] text-primary/35">NO_ACTIVE_TASKS_FOUND</div> : null}
+    </div>
+  );
+}
+
+function GridView({ tasks }: { tasks: Task[] }) {
+  return (
+    <div className="h-full overflow-y-auto p-5 custom-scrollbar">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+        {tasks.map((task) => (
+          <div key={task.id} className="flex min-h-[170px] flex-col border border-primary/15 bg-[#090903] p-4 transition hover:border-primary/35">
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-[9px] uppercase tracking-[0.18em] text-primary/30">{task.id.substring(0, 8)}</span>
+              <div className={cn("h-2 w-2 rounded-full", task.status === "completed" ? "bg-green-500/70" : task.status === "in-progress" ? "bg-primary animate-pulse" : "bg-primary/40")} />
             </div>
-            <h4 className={cn("text-xs font-bold tracking-wide", task.status === 'completed' ? "text-white/40 line-through" : "text-white")}>{task.title}</h4>
-            <div className="mt-auto flex justify-between items-center border-t border-primary/10 pt-3">
-              <span className="text-[9px] text-primary/60 uppercase">{task.priority}</span>
-              <span className="text-[9px] text-primary/40 uppercase">{task.status}</span>
+            <div className={cn("mt-5 text-[12px] font-semibold uppercase tracking-[0.14em]", task.status === "completed" ? "text-white/35 line-through" : "text-white/85")}>{task.title}</div>
+            <div className="mt-auto border-t border-primary/10 pt-3 text-[10px] uppercase tracking-[0.18em] text-primary/45">
+              <div>{task.priority}</div>
+              <div className="mt-2">{task.status}</div>
             </div>
           </div>
         ))}
       </div>
-      {tasks.length === 0 && (
-        <div className="text-center text-primary/40 text-xs py-10 tracking-widest uppercase">NO_ACTIVE_TASKS_FOUND</div>
-      )}
+      {tasks.length === 0 ? <div className="py-12 text-center text-[10px] uppercase tracking-[0.24em] text-primary/35">NO_ACTIVE_TASKS_FOUND</div> : null}
     </div>
   );
 }
+

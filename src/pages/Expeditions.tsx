@@ -1,58 +1,81 @@
-import React, { useEffect, useState, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Plus, CheckSquare, Square, Zap, Activity, Globe, ShieldCheck } from "lucide-react";
-import { useExpeditionStore, ExpeditionItem } from "@/store/useExpeditionStore";
+import { useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  Activity,
+  Archive,
+  CheckSquare,
+  LayoutDashboard,
+  LoaderCircle,
+  Plus,
+  Rocket,
+  ShieldCheck,
+  Square,
+} from "lucide-react";
+import { Link } from "react-router-dom";
+import { useExpeditionStore } from "@/store/useExpeditionStore";
 import { useDialogStore } from "@/store/useDialogStore";
+import { useSystemLogStore } from "@/store/useSystemLogStore";
+import { useChronosStore } from "@/store/useChronosStore";
 import { ArkanAudio } from "@/lib/audio/ArkanAudio";
 import { cn } from "@/lib/utils";
-import { useSystemLogStore } from "@/store/useSystemLogStore";
+import { deriveExpeditionIntel } from "@/lib/expeditions";
+
+const SUB_NAV = [
+  { label: "DASHBOARD", href: "/dashboard", icon: LayoutDashboard },
+  { label: "EXPEDITIONS", href: "/expeditions", icon: Rocket },
+  { label: "ARCHIVES", href: "/archive", icon: Archive },
+];
 
 export default function ExpeditionsPage() {
-  const { sectors, fetchManifest, initializeSector, addComponent, deManifestItem, getReadiness } = useExpeditionStore();
+  const { sectors, isLoading, fetchManifest, initializeSector, addComponent, deManifestItem, getReadiness } = useExpeditionStore();
   const { openDialog } = useDialogStore();
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [glitchingItems, setGlitchingItems] = useState<string[]>([]);
-  const { logs } = useSystemLogStore();
-
+  const logs = useSystemLogStore((state) => state.logs);
+  const { cpuUsage, memUsage, netSpeed } = useChronosStore();
+  const [manifestingIds, setManifestingIds] = useState<string[]>([]);
   const [coords, setCoords] = useState({ lat: "34.0522 N", lon: "118.2437 W" });
+  const [clock, setClock] = useState(() => new Date());
 
   useEffect(() => {
-    fetchManifest();
-    
-    // Simulate real-time coordinate updates
-    const interval = setInterval(() => {
-      setCoords(prev => {
-        const latVal = parseFloat(prev.lat) + (Math.random() - 0.5) * 0.0001;
-        const lonVal = parseFloat(prev.lon) + (Math.random() - 0.5) * 0.0001;
+    void fetchManifest();
+
+    const clockInterval = window.setInterval(() => setClock(new Date()), 1000);
+    const coordsInterval = window.setInterval(() => {
+      setCoords((current) => {
+        const latValue = parseFloat(current.lat) + (Math.random() - 0.5) * 0.0001;
+        const lonValue = parseFloat(current.lon) + (Math.random() - 0.5) * 0.0001;
+
         return {
-          lat: `${latVal.toFixed(4)} N`,
-          lon: `${lonVal.toFixed(4)} W`
+          lat: `${latValue.toFixed(4)} N`,
+          lon: `${lonValue.toFixed(4)} W`,
         };
       });
-    }, 3000);
-    
-    return () => clearInterval(interval);
+    }, 3200);
+
+    return () => {
+      window.clearInterval(clockInterval);
+      window.clearInterval(coordsInterval);
+    };
   }, [fetchManifest]);
+
+  const readiness = getReadiness();
+  const intelFeed = useMemo(() => deriveExpeditionIntel(logs, sectors), [logs, sectors]);
+  const totalActiveItems = useMemo(
+    () => sectors.reduce((accumulator, sector) => accumulator + sector.items.length, 0),
+    [sectors]
+  );
+  const subSector = sectors[0]?.label ?? "44-B_GAMMA";
 
   const handleInitializeSector = () => {
     openDialog({
-      title: "INITIALIZE_COLONY_LIST",
+      title: "INITIALIZE_NEW_COLONY_LIST",
       description: "DEFINE_SECTOR_ID_FOR_LOGISTICS_ALLOCATION",
       placeholder: "SECTOR_NAME...",
-      onConfirm: async (val) => {
-        if (val) {
-          await initializeSector(val);
-          // Scroll to end
-          setTimeout(() => {
-            if (scrollContainerRef.current) {
-              scrollContainerRef.current.scrollTo({
-                left: scrollContainerRef.current.scrollWidth,
-                behavior: 'smooth'
-              });
-            }
-          }, 100);
+      confirmLabel: "COMMIT_LIST",
+      onConfirm: async (value) => {
+        if (value?.trim()) {
+          await initializeSector(value);
         }
-      }
+      },
     });
   };
 
@@ -61,199 +84,266 @@ export default function ExpeditionsPage() {
       title: "ADD_COMPONENT",
       description: "SPECIFY_HARDWARE_OR_PROTOCOL_NODE",
       placeholder: "COMPONENT_NAME...",
-      onConfirm: (val) => {
-        if (val) addComponent(sectorId, val);
-      }
+      confirmLabel: "BUFFER_COMPONENT",
+      onConfirm: async (value) => {
+        if (value?.trim()) {
+          await addComponent(sectorId, value);
+        }
+      },
     });
   };
 
-  const handleCheck = async (itemId: string) => {
-    setGlitchingItems(prev => [...prev, itemId]);
+  const handleManifestItem = async (itemId: string) => {
+    setManifestingIds((current) => [...current, itemId]);
     await deManifestItem(itemId);
-    
-    // Remove from UI after animation
-    setTimeout(() => {
-      useExpeditionStore.setState(state => ({
-        sectors: state.sectors.map(s => ({
-          ...s,
-          items: s.items.filter(i => i.id !== itemId)
-        }))
-      }));
-      setGlitchingItems(prev => prev.filter(id => id !== itemId));
-    }, 400);
+    setManifestingIds((current) => current.filter((entry) => entry !== itemId));
   };
 
-  // Readiness calculation
-  const { percentage: readiness, manifested: archivedCount, total: totalItems } = getReadiness();
-  const allItemsCount = sectors.reduce((acc, s) => acc + s.items.length, 0);
-
   return (
-    <div className="h-full flex flex-col bg-black font-mono overflow-hidden relative">
-      {/* Page Title Overlay */}
-      <div className="absolute top-8 left-8 z-20 pointer-events-none">
-        <h1 className="text-2xl font-bold tracking-[0.4em] text-primary uppercase drop-shadow-[0_0_10px_rgba(249,249,6,0.3)]">
-          LOGISTICS // PENDING
-        </h1>
+    <div className="flex h-full min-h-0 flex-col bg-[#050605] text-[#eef85a]">
+      <div className="border-b border-[#1d2108] bg-[#070805] px-5 py-4 lg:px-7">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex flex-wrap items-center gap-6">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.34em] text-[#7b8426]">ARKAN_OS</p>
+              <h1 className="mt-1 text-xl font-semibold uppercase tracking-[0.16em] text-white">TACTICAL_PLANNER_HUB</h1>
+            </div>
+
+            <nav className="flex items-center gap-2 border border-[#22250b] bg-[#0a0c05] p-1">
+              {SUB_NAV.map((item) => (
+                <Link
+                  key={item.href}
+                  to={item.href}
+                  className={cn(
+                    "inline-flex items-center gap-2 px-4 py-2 text-[11px] uppercase tracking-[0.28em] transition-colors duration-200",
+                    item.href === "/expeditions"
+                      ? "border border-[#dce84d] bg-[#191c07] text-[#eef85a]"
+                      : "text-[#66711f] hover:text-[#d9e55d]"
+                  )}
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </Link>
+              ))}
+            </nav>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-5 text-[11px] uppercase tracking-[0.24em] text-[#cdd66b]">
+            <div className="flex items-center gap-2">
+              <span className="text-[#697120]">CPU:</span>
+              <span>{cpuUsage}%</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[#697120]">MEM:</span>
+              <span>{memUsage}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[#697120]">NET:</span>
+              <span>{netSpeed}</span>
+            </div>
+            <div className="border-l border-[#292d0f] pl-5 text-right">
+              <p className="text-[#717923]">SYSTEM_TIME</p>
+              <p className="mt-1 text-lg font-semibold tracking-[0.14em] text-white">{clock.toLocaleTimeString("en-US", { hour12: false })}</p>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Main Content - Horizontal Scroll */}
-      <div 
-        ref={scrollContainerRef}
-        className="flex-1 overflow-x-auto overflow-y-hidden flex p-8 pt-24 gap-6 custom-scrollbar snap-x snap-mandatory md:snap-none"
-      >
-        <AnimatePresence mode="popLayout">
-          {sectors.map((sector) => (
-            <motion.div
-              key={sector.id}
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              className="w-[320px] shrink-0 flex flex-col border border-primary/20 bg-primary/[0.02] relative group snap-center"
-            >
-              {/* Sector Header */}
-              <div className="p-4 border-b border-primary/10 flex justify-between items-center bg-primary/40">
-                <h2 className="text-sm font-bold text-black tracking-widest uppercase">
-                  [ {sector.label} ]
-                </h2>
-                <div className="px-2 py-0.5 bg-black/20 border border-black/20 rounded text-[9px] text-black font-bold">
-                  {sector.items.length} ITEMS
-                </div>
+      <div className="grid flex-1 min-h-0 gap-5 overflow-hidden px-5 py-5 lg:px-7 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <section className="flex min-h-0 flex-col overflow-hidden border border-[#1d2108] bg-[radial-gradient(circle_at_top,rgba(239,248,90,0.05),transparent_32%),linear-gradient(180deg,rgba(9,10,5,0.98),rgba(5,6,3,0.98))]">
+          <div className="flex flex-col gap-5 border-b border-[#1d2108] px-6 py-6 xl:flex-row xl:items-start xl:justify-between">
+            <div>
+              <h2 className="text-5xl font-black uppercase tracking-[0.08em] text-white">EXPEDITION <span className="text-primary">//</span> CHECKLISTS</h2>
+              <div className="mt-4 flex flex-wrap items-center gap-4 text-[12px] uppercase tracking-[0.32em] text-[#d6e063]">
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#dff03d] shadow-[0_0_12px_rgba(223,240,61,0.6)]" />
+                  STATUS: ACTIVE_LOGISTIC_PLANNING
+                </span>
+                <span className="text-[#707823]">SUB-SECTOR: {subSector}</span>
               </div>
+            </div>
 
-              {/* Items List */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+            <button
+              type="button"
+              onClick={handleInitializeSector}
+              className="inline-flex items-center justify-center gap-2 border border-[#eff84d] bg-[#eef84d] px-6 py-4 text-xs font-semibold uppercase tracking-[0.28em] text-[#101305] transition-colors duration-200 hover:bg-[#fbff88]"
+            >
+              <Plus className="h-4 w-4" />
+              INITIALIZE_NEW_COLONY_LIST
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-auto px-6 py-6">
+            {isLoading ? (
+              <div className="flex h-full items-center justify-center border border-dashed border-[#353911] bg-[#090b04] text-[12px] uppercase tracking-[0.32em] text-[#9fa739]">
+                <LoaderCircle className="mr-3 h-5 w-5 animate-spin" />
+                SYNCING_MANIFEST
+              </div>
+            ) : sectors.length ? (
+              <div className="grid gap-6 xl:grid-cols-2 2xl:grid-cols-3">
                 <AnimatePresence mode="popLayout">
-                  {sector.items.map((item) => (
-                    <motion.div
-                      key={item.id}
+                  {sectors.map((sector) => (
+                    <motion.article
+                      key={sector.id}
                       layout
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, scale: 0.9 }}
-                      onMouseEnter={() => ArkanAudio.playFast('key_tick_mechanical')}
-                      className={cn(
-                        "group/item flex items-center gap-4 p-4 bg-black/40 border border-primary/10 hover:border-primary/40 transition-all cursor-pointer relative overflow-hidden",
-                        glitchingItems.includes(item.id) && "animate-glitch-fade-out pointer-events-none"
-                      )}
-                      onClick={() => handleCheck(item.id)}
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="flex min-h-[360px] flex-col border border-[#363b12] bg-[#090a04]"
                     >
-                      <div className="shrink-0 text-primary/40 group-hover/item:text-primary transition-colors">
-                        <Square size={20} className="group-hover/item:hidden" />
-                        <CheckSquare size={20} className="hidden group-hover/item:block" />
+                      <div className="flex items-center justify-between gap-4 border-b border-[#4c5218] px-5 py-4">
+                        <h3 className="text-2xl font-semibold uppercase tracking-[0.16em] text-white">[ {sector.label} ]</h3>
+                        <div className="border border-[#e3ef4d] bg-[#eef84d] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-[#111305]">
+                          {sector.manifestedCount}/{sector.totalCount}_ITEMS
+                        </div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-bold text-white tracking-tight uppercase truncate group-hover/item:text-primary transition-colors">
-                          {item.label}
-                        </p>
+
+                      <div className="flex flex-1 flex-col gap-3 p-5">
+                        <AnimatePresence mode="popLayout">
+                          {sector.items.map((item) => {
+                            const isManifesting = manifestingIds.includes(item.id);
+
+                            return (
+                              <motion.button
+                                key={item.id}
+                                layout
+                                type="button"
+                                initial={{ opacity: 0, x: -10 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, scale: 0.96 }}
+                                onClick={() => void handleManifestItem(item.id)}
+                                onMouseEnter={() => ArkanAudio.playFast("key_tick_mechanical")}
+                                disabled={isManifesting}
+                                className={cn(
+                                  "group flex items-center gap-4 border px-4 py-4 text-left transition-colors duration-200",
+                                  isManifesting
+                                    ? "cursor-wait border-[#5b611b] bg-[#121406] text-[#9da538]"
+                                    : "border-[#2a2d0e] bg-[#111306] hover:border-[#e0eb49] hover:bg-[#171a08]"
+                                )}
+                              >
+                                <div className="flex h-8 w-8 items-center justify-center border border-[#707722] bg-[#0c0d05] text-[#e8f24d]">
+                                  {isManifesting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckSquare className="hidden h-4 w-4 group-hover:block" />}
+                                  {!isManifesting ? <Square className="h-4 w-4 group-hover:hidden" /> : null}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#eef85a]">{item.label}</p>
+                                  <div className="mt-2 flex flex-wrap items-center gap-3 text-[10px] uppercase tracking-[0.24em] text-[#7a8227]">
+                                    <span>{item.technical_id}</span>
+                                    <span className="border border-[#30340f] px-2 py-1">{item.priority}</span>
+                                  </div>
+                                </div>
+                              </motion.button>
+                            );
+                          })}
+                        </AnimatePresence>
+
+                        <button
+                          type="button"
+                          onClick={() => handleAddComponent(sector.id)}
+                          className="mt-auto border border-[#30340f] px-4 py-4 text-xs font-semibold uppercase tracking-[0.3em] text-[#d5dd6a] transition-colors duration-200 hover:border-[#dbe74c] hover:bg-[#141706]"
+                        >
+                          + ADD_COMPONENT
+                        </button>
                       </div>
-                      
-                      {/* Technical ID overlay on hover */}
-                      <div className="absolute top-1 right-1 opacity-0 group-hover/item:opacity-20 transition-opacity">
-                        <span className="text-[8px] text-primary font-mono">{item.technical_id}</span>
-                      </div>
-                    </motion.div>
+                    </motion.article>
                   ))}
                 </AnimatePresence>
-
-                {/* Add Item Button */}
-                <button
-                  onClick={() => handleAddComponent(sector.id)}
-                  className="w-full py-4 border border-dashed border-primary/20 text-[10px] font-bold text-primary/40 hover:text-primary hover:border-primary/40 transition-all flex items-center justify-center gap-2 uppercase tracking-widest"
-                >
-                  <Plus size={12} />
-                  ADD_COMPONENT
-                </button>
               </div>
+            ) : (
+              <div className="flex h-full min-h-[320px] items-center justify-center border border-dashed border-[#31360f] bg-[#090b04]">
+                <div className="text-center">
+                  <Rocket className="mx-auto h-12 w-12 text-[#5f6720]" />
+                  <p className="mt-5 text-[12px] uppercase tracking-[0.34em] text-[#9ea73d]">NO_ACTIVE_COLONY_LISTS</p>
+                  <button
+                    type="button"
+                    onClick={handleInitializeSector}
+                    className="mt-6 border border-[#dbe84d] px-5 py-3 text-[11px] uppercase tracking-[0.28em] text-[#eef85a] transition-colors duration-200 hover:bg-[#141706]"
+                  >
+                    INITIALIZE_FIRST_LIST
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
 
-              {/* Corner Accents */}
-              <div className="absolute top-0 left-0 w-2 h-2 border-t-2 border-l-2 border-primary opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="absolute bottom-0 right-0 w-2 h-2 border-b-2 border-r-2 border-primary opacity-0 group-hover:opacity-100 transition-opacity" />
-            </motion.div>
-          ))}
-        </AnimatePresence>
+        <aside className="flex min-h-0 flex-col gap-4">
+          <div className="flex-1 border border-[#1d2108] bg-[#090a04]">
+            <div className="flex items-center justify-between gap-4 border-b border-[#2d310f] px-5 py-4">
+              <div>
+                <p className="text-2xl font-semibold uppercase tracking-[0.18em] text-[#eef85a]">INBOX <span className="text-white">GLOBAL_INBOX</span></p>
+              </div>
+              <span className="text-[11px] uppercase tracking-[0.28em] text-[#d7e25f]">{intelFeed.length}_NEW</span>
+            </div>
 
-        {sectors.length === 0 && (
-          <div className="flex-1 flex items-center justify-center border border-dashed border-primary/10 rounded-lg">
-            <div className="text-center">
-              <Zap size={48} className="text-primary/10 mx-auto mb-4" />
-              <p className="text-primary/30 text-xs tracking-[0.5em] uppercase">NO_SECTORS_INITIALIZED</p>
+            <div className="space-y-4 p-5">
+              {intelFeed.map((entry) => (
+                <div key={entry.id} className="border border-[#25290d] bg-[#0f1106] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.26em] text-[#dfe94d]">{entry.label}</p>
+                    <span className="text-[10px] uppercase tracking-[0.24em] text-[#697121]">{entry.timestamp}</span>
+                  </div>
+                  <p className="mt-4 text-sm uppercase leading-7 tracking-[0.14em] text-[#8f9834]">{entry.message}</p>
+                </div>
+              ))}
             </div>
           </div>
-        )}
-      </div>
 
-      {/* Footer / Telemetry */}
-      <footer className="h-16 border-t border-primary/20 bg-black flex items-center justify-between px-8 shrink-0 relative z-50">
-        <div className="flex items-center gap-8">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]" />
-            <span className="text-[10px] font-bold text-primary uppercase tracking-widest">SYS_STABLE</span>
-          </div>
-          
-          <div className="h-4 w-px bg-primary/10" />
-
-          <div className="flex items-center gap-4 max-w-md overflow-hidden">
-            <span className="text-[10px] text-primary/40 font-mono truncate">
-              &gt; {logs[0]?.message || "SYSTEM_STANDBY // WAITING_FOR_INPUT..."}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-8">
-          <div className="flex items-center gap-6 text-[10px] font-mono">
-            <div className="flex gap-2">
-              <span className="text-primary/40 uppercase">LAT:</span>
-              <span className="text-primary">{coords.lat}</span>
+          <div className="border border-[#1d2108] bg-[#090a04] p-5">
+            <div className="flex items-center justify-between gap-4">
+              <h3 className="text-xs font-semibold uppercase tracking-[0.3em] text-[#eff85a]">READINESS</h3>
+              <span className="text-sm font-semibold uppercase tracking-[0.18em] text-white">{readiness.percentage}%</span>
             </div>
-            <div className="flex gap-2">
-              <span className="text-primary/40 uppercase">LON:</span>
-              <span className="text-primary">{coords.lon}</span>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-2 text-primary">
-            <ShieldCheck size={14} />
-            <span className="text-[10px] font-bold uppercase tracking-widest">SECURE_LINK</span>
-          </div>
-        </div>
-      </footer>
-
-      {/* Readiness Widget - Bottom Right */}
-      <div className="absolute bottom-24 right-8 w-80 bg-black/80 border border-primary/30 p-6 backdrop-blur-xl z-50 shadow-[0_0_30px_rgba(0,0,0,0.5)]">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-xs font-bold text-primary tracking-widest uppercase flex items-center gap-2">
-            EXPEDITION_STATUS
-            <Activity size={12} className="animate-pulse" />
-          </h3>
-        </div>
-
-        <div className="space-y-4">
-          <div>
-            <div className="flex justify-between text-[10px] mb-2">
-              <span className="text-white/40 uppercase">READINESS</span>
-              <span className="text-primary font-bold">{readiness}%</span>
-            </div>
-            <div className="h-1.5 w-full bg-primary/10 rounded-full overflow-hidden">
-              <motion.div 
-                className="h-full bg-primary shadow-[0_0_15px_#ffff00]"
+            <div className="mt-4 h-2 overflow-hidden bg-[#1d2108]">
+              <motion.div
+                className="h-full bg-[#eef84d] shadow-[0_0_16px_rgba(238,248,77,0.5)]"
                 initial={{ width: 0 }}
-                animate={{ width: `${readiness}%` }}
-                transition={{ duration: 1, ease: "easeOut" }}
+                animate={{ width: `${readiness.percentage}%` }}
+                transition={{ duration: 0.45, ease: "easeOut" }}
               />
             </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+              <div className="border border-[#2a2e0f] bg-[#0e1005] p-4">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-[#6d7522]">MANIFESTED</p>
+                <p className="mt-3 text-3xl font-semibold tracking-[0.14em] text-[#eef85a]">{readiness.manifested.toString().padStart(2, "0")}</p>
+              </div>
+              <div className="border border-[#2a2e0f] bg-[#0e1005] p-4">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-[#6d7522]">PENDING</p>
+                <p className="mt-3 text-3xl font-semibold tracking-[0.14em] text-white">{readiness.pending.toString().padStart(2, "0")}</p>
+              </div>
+              <div className="border border-[#2a2e0f] bg-[#0e1005] p-4">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-[#6d7522]">ACTIVE_LISTS</p>
+                <p className="mt-3 text-3xl font-semibold tracking-[0.14em] text-white">{sectors.length.toString().padStart(2, "0")}</p>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <div className="border-t border-[#1d2108] bg-[#070805] px-5 py-3 text-[11px] uppercase tracking-[0.24em] text-[#727a23] lg:px-7">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="inline-flex items-center gap-2 text-[#d8e15b]">
+              <span className="h-2.5 w-2.5 rounded-full bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.55)]" />
+              SYS_STABLE_VER_1.04
+            </span>
+            <span>ITEM_TRANSFER_TO_ARCHIVE: {readiness.manifested ? "SUCCESS" : "STANDBY"}</span>
+            <span>SYNCING_WITH_ORBITAL_STATION_B4</span>
+            <span>ACTIVE_ITEMS: {totalActiveItems.toString().padStart(2, "0")}</span>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-primary/5 border border-primary/10 p-3">
-              <span className="text-[8px] text-primary/40 uppercase block mb-1">MANIFESTED</span>
-              <span className="text-2xl font-bold text-primary">{archivedCount.toString().padStart(2, '0')}</span>
-            </div>
-            <div className="bg-primary/5 border border-primary/10 p-3">
-              <span className="text-[8px] text-primary/40 uppercase block mb-1">PENDING</span>
-              <span className="text-2xl font-bold text-white">{allItemsCount.toString().padStart(2, '0')}</span>
-            </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <span>LAT: {coords.lat}</span>
+            <span>LON: {coords.lon}</span>
+            <span className="inline-flex items-center gap-2 text-[#eef85a]">
+              <ShieldCheck className="h-4 w-4" />
+              SECURE_LINK_ENCRYPTED
+            </span>
           </div>
         </div>
       </div>
     </div>
   );
 }
+

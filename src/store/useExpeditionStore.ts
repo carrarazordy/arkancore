@@ -1,24 +1,17 @@
-import { create } from 'zustand';
-import { supabase } from '@/lib/supabase';
-import { useSystemLogStore } from './useSystemLogStore';
-import { ArkanAudio } from '@/lib/audio/ArkanAudio';
+import { create } from "zustand";
+import { supabase } from "@/lib/supabase";
+import { useSystemLogStore } from "./useSystemLogStore";
+import { ArkanAudio } from "@/lib/audio/ArkanAudio";
+import {
+  computeExpeditionReadiness,
+  hydrateExpeditionManifest,
+  type ExpeditionPriority,
+  type HydratedExpeditionSector,
+  type ManifestItemRow,
+} from "@/lib/expeditions";
 
-export interface ExpeditionItem {
-  id: string;
-  sector_id: string;
-  label: string;
-  is_manifested: boolean;
-  technical_id: string;
-  priority: 'low' | 'medium' | 'high' | 'critical';
-  created_at?: string;
-}
-
-export interface ExpeditionSector {
-  id: string;
-  label: string;
-  order_index: number;
-  items: ExpeditionItem[];
-}
+export type ExpeditionItem = ManifestItemRow;
+export type ExpeditionSector = HydratedExpeditionSector;
 
 interface ExpeditionState {
   sectors: ExpeditionSector[];
@@ -26,9 +19,9 @@ interface ExpeditionState {
   isLoading: boolean;
   fetchManifest: () => Promise<void>;
   initializeSector: (label: string) => Promise<void>;
-  addComponent: (sectorId: string, label: string) => Promise<void>;
+  addComponent: (sectorId: string, label: string, priority?: ExpeditionPriority) => Promise<void>;
   deManifestItem: (itemId: string) => Promise<void>;
-  getReadiness: () => { percentage: number; manifested: number; total: number };
+  getReadiness: () => { percentage: number; manifested: number; pending: number; total: number };
 }
 
 export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
@@ -38,121 +31,177 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
 
   fetchManifest: async () => {
     set({ isLoading: true });
+
     try {
-      // Fetch sectors
-      const { data: sectors, error: secError } = await supabase
-        .from('expedition_sectors')
-        .select('*')
-        .order('order_index', { ascending: true });
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session?.user) {
+        set({ sectors: [], archivedCount: 0, isLoading: false });
+        return;
+      }
 
-      if (secError) throw secError;
+      const { data: sectors, error: sectorsError } = await supabase
+        .from("expedition_sectors")
+        .select("id,label,order_index")
+        .order("order_index", { ascending: true });
 
-      // Fetch active items
-      const { data: items, error: itemError } = await supabase
-        .from('expedition_items')
-        .select('*')
-        .eq('is_manifested', false)
-        .order('created_at', { ascending: true });
+      if (sectorsError) {
+        throw sectorsError;
+      }
 
-      if (itemError) throw itemError;
+      const { data: items, error: itemsError } = await supabase
+        .from("expedition_items")
+        .select("id,sector_id,label,is_manifested,technical_id,priority,created_at")
+        .order("created_at", { ascending: true });
 
-      // Fetch manifested count
-      const { count, error: countError } = await supabase
-        .from('expedition_items')
-        .select('*', { count: 'exact', head: true })
-        .eq('is_manifested', true);
+      if (itemsError) {
+        throw itemsError;
+      }
 
-      if (countError) throw countError;
+      const hydrated = hydrateExpeditionManifest(sectors ?? [], items ?? []);
+      const readiness = computeExpeditionReadiness(hydrated);
 
-      const sectorsWithItems = sectors.map(sec => ({
-        ...sec,
-        items: items.filter(item => item.sector_id === sec.id)
-      }));
-
-      set({ sectors: sectorsWithItems, archivedCount: count || 0 });
+      set({
+        sectors: hydrated,
+        archivedCount: readiness.manifested,
+      });
     } catch (error) {
-      console.error('Error fetching expedition manifest:', error);
+      console.error("Error fetching expedition manifest:", error);
+      useSystemLogStore.getState().addLog("EXPEDITION_FETCH_FAILED", "error");
     } finally {
       set({ isLoading: false });
     }
   },
 
   initializeSector: async (label: string) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.user) return;
+    const normalizedLabel = label.trim().toUpperCase();
+    if (!normalizedLabel) {
+      return;
+    }
 
-    useSystemLogStore.getState().addLog(`>> ALLOCATING_NEW_SECTOR: ${label.toUpperCase()}`, 'system');
-    
+    const { data: sessionData } = await supabase.auth.getSession();
+    const user = sessionData.session?.user;
+    if (!user) {
+      return;
+    }
+
+    useSystemLogStore.getState().addLog(`ALLOCATING_NEW_SECTOR:${normalizedLabel}`, "system");
+
     const { data, error } = await supabase
-      .from('expedition_sectors')
-      .insert([{ 
-        label: label.toUpperCase(), 
-        user_id: session.user.id,
-        order_index: get().sectors.length 
-      }])
-      .select()
+      .from("expedition_sectors")
+      .insert([
+        {
+          label: normalizedLabel,
+          user_id: user.id,
+          order_index: get().sectors.length,
+        },
+      ])
+      .select("id,label,order_index")
       .single();
 
-    if (!error && data) {
-      set(state => ({
-        sectors: [...state.sectors, { ...data, items: [] }]
-      }));
-      ArkanAudio.play('system_execute_clack');
+    if (error || !data) {
+      useSystemLogStore.getState().addLog("SECTOR_INITIALIZATION_FAILED", "error");
+      return;
     }
+
+    set((state) => ({
+      sectors: [
+        ...state.sectors,
+        {
+          ...data,
+          items: [],
+          manifestedCount: 0,
+          totalCount: 0,
+        },
+      ],
+    }));
+    ArkanAudio.play("system_execute_clack");
   },
 
-  addComponent: async (sectorId: string, label: string) => {
-    const technicalId = Math.random().toString(16).slice(2, 8).toUpperCase();
-    
+  addComponent: async (sectorId: string, label: string, priority: ExpeditionPriority = "medium") => {
+    const normalizedLabel = label.trim().toUpperCase();
+    if (!normalizedLabel) {
+      return;
+    }
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const user = sessionData.session?.user;
+    if (!user) {
+      return;
+    }
+
     const { data, error } = await supabase
-      .from('expedition_items')
-      .insert([{
-        sector_id: sectorId,
-        label: label.toUpperCase(),
-        technical_id: `NODE_${technicalId}`,
-        is_manifested: false,
-        priority: 'medium'
-      }])
-      .select()
+      .from("expedition_items")
+      .insert([
+        {
+          user_id: user.id,
+          sector_id: sectorId,
+          label: normalizedLabel,
+          is_manifested: false,
+          priority,
+        },
+      ])
+      .select("id,sector_id,label,is_manifested,technical_id,priority,created_at")
       .single();
 
-    if (!error && data) {
-      set(state => ({
-        sectors: state.sectors.map(s => 
-          s.id === sectorId ? { ...s, items: [...s.items, data] } : s
-        )
-      }));
-      ArkanAudio.play('key_tick_mechanical');
+    if (error || !data) {
+      useSystemLogStore.getState().addLog("COMPONENT_APPEND_FAILED", "error");
+      return;
     }
+
+    set((state) => ({
+      sectors: state.sectors.map((sector) =>
+        sector.id === sectorId
+          ? {
+              ...sector,
+              items: [...sector.items, data],
+              totalCount: sector.totalCount + 1,
+            }
+          : sector
+      ),
+    }));
+    useSystemLogStore.getState().addLog(`COMPONENT_BUFFERED:${normalizedLabel}`, "status");
+    ArkanAudio.play("key_tick_mechanical");
   },
 
   deManifestItem: async (itemId: string) => {
-    useSystemLogStore.getState().addLog(`>> INITIATING_DE-MANIFESTATION: NODE_${itemId}`, 'status');
-    ArkanAudio.play('ui_confirm_ping');
+    const state = get();
+    const sector = state.sectors.find((candidate) => candidate.items.some((item) => item.id === itemId));
+    const item = sector?.items.find((candidate) => candidate.id === itemId);
+
+    if (!sector || !item) {
+      return;
+    }
+
+    useSystemLogStore.getState().addLog(`INITIATING_DEMANIFESTATION:${item.technical_id}`, "status");
+    ArkanAudio.play("ui_confirm_ping");
 
     const { error } = await supabase
-      .from('expedition_items')
-      .update({ 
+      .from("expedition_items")
+      .update({
         is_manifested: true,
-        de_manifested_at: new Date().toISOString() 
+        de_manifested_at: new Date().toISOString(),
       })
-      .eq('id', itemId);
+      .eq("id", itemId);
 
-    if (!error) {
-      set(state => ({ archivedCount: state.archivedCount + 1 }));
-      useSystemLogStore.getState().addLog(`>> ITEM_TRANSFER_TO_ARCHIVE: SUCCESS // NODE_${itemId}`, 'system');
+    if (error) {
+      useSystemLogStore.getState().addLog(`ITEM_TRANSFER_FAILED:${item.technical_id}`, "error");
+      return;
     }
+
+    set((current) => ({
+      archivedCount: current.archivedCount + 1,
+      sectors: current.sectors.map((candidate) =>
+        candidate.id === sector.id
+          ? {
+              ...candidate,
+              items: candidate.items.filter((entry) => entry.id !== itemId),
+              manifestedCount: candidate.manifestedCount + 1,
+            }
+          : candidate
+      ),
+    }));
+    useSystemLogStore.getState().addLog(`ITEM_TRANSFER_TO_ARCHIVE:SUCCESS // ${item.technical_id}`, "system");
   },
 
-  getReadiness: () => {
-    const allItems = get().sectors.flatMap(s => s.items);
-    const manifested = get().archivedCount;
-    const total = allItems.length + manifested;
-    
-    return {
-      percentage: total > 0 ? Math.round((manifested / total) * 100) : 0,
-      manifested,
-      total
-    };
-  }
+  getReadiness: () => computeExpeditionReadiness(get().sectors),
 }));

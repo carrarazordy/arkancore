@@ -1,45 +1,67 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+
+const PUBLIC_ROUTES = new Set(["/", "/login", "/signup"]);
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
     const [loading, setLoading] = useState(true);
-    const [user, setUser] = useState<any>(null);
+    const [user, setUser] = useState<User | null>(null);
     const navigate = useNavigate();
     const { pathname } = useLocation();
 
+    const isPublicPage = useMemo(() => PUBLIC_ROUTES.has(pathname), [pathname]);
+
     useEffect(() => {
-        console.log("AuthGuard: Checking auth...");
-        const checkAuth = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            console.log("AuthGuard: Session retrieved", session);
-            setUser(session?.user ?? null);
+        let isMounted = true;
+
+        const syncAuth = async () => {
+            const { data, error } = await supabase.auth.getSession();
+            if (!isMounted) return;
+
+            if (error) {
+                console.error("AuthGuard session lookup failed:", error.message);
+            }
+
+            setUser(data.session?.user ?? null);
             setLoading(false);
         };
-        checkAuth();
 
-        const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+        void syncAuth();
+
+        const {
+            data: { subscription },
+        } = supabase.auth.onAuthStateChange((_event, session) => {
+            if (!isMounted) return;
             setUser(session?.user ?? null);
-            if (event === 'SIGNED_OUT') {
-                navigate('/login');
-            }
+            setLoading(false);
         });
 
         return () => {
-            authListener.subscription.unsubscribe();
+            isMounted = false;
+            subscription.unsubscribe();
         };
-    }, [navigate]);
+    }, []);
 
-    const isPublicPage = ["/", "/login", "/signup"].includes(pathname);
+    useEffect(() => {
+        if (loading) return;
+
+        if (!user && !isPublicPage) {
+            navigate("/login", { replace: true, state: { from: pathname } });
+            return;
+        }
+
+        if (user && (pathname === "/" || pathname === "/login" || pathname === "/signup")) {
+            navigate("/dashboard", { replace: true });
+        }
+    }, [isPublicPage, loading, navigate, pathname, user]);
 
     if (loading) {
         return <div className="min-h-screen bg-background text-primary flex items-center justify-center font-mono text-sm tracking-widest">INITIALIZING_SYSTEM...</div>;
     }
 
     if (!user && !isPublicPage) {
-        // Redirect to login if trying to access a private page without auth
-        // Use setTimeout to avoid state updates during render
-        setTimeout(() => navigate('/login'), 0);
         return null;
     }
 

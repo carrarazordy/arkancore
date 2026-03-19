@@ -1,50 +1,168 @@
+
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNoteStore, ArchiveNode } from '@/store/useNoteStore';
 import { useTaskStore } from '@/store/useTaskStore';
+import { useSystemLogStore } from '@/store/useSystemLogStore';
+import { useHardwareMetrics } from '@/store/useHardwareMetrics';
+import { useChronosStore } from '@/store/useChronosStore';
 import { ArkanAudio } from '@/lib/audio/ArkanAudio';
 import { cn } from '@/lib/utils';
-import { 
-  Folder, 
-  FolderOpen, 
-  ChevronRight, 
-  ChevronDown, 
-  ChevronLeft,
-  PanelLeftClose,
-  PanelLeftOpen,
-  FileText, 
-  Plus, 
-  Share2, 
-  MoreVertical, 
-  Zap, 
-  Lock, 
-  User, 
-  Cpu, 
-  Search, 
-  CheckCircle2, 
-  FileSearch, 
+import {
+  Activity,
   BrainCircuit,
+  CheckCircle2,
+  CheckSquare as TaskAlt,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Command,
+  Copy,
+  Cpu,
+  Database,
+  FileSearch,
+  FileText,
+  Folder,
+  FolderOpen,
+  Lock,
+  MoreVertical,
+  Plus,
+  Search,
+  Share2,
   Sparkles,
-  FileText as Summarize,
-  Search as Troubleshoot,
-  CheckSquare as TaskAlt
+  User,
+  Zap,
 } from 'lucide-react';
 
-// Recursive Sidebar Component
-const FileSystemNode = ({ 
-  node, 
-  nodes, 
-  level = 0 
-}: { 
-  node: ArchiveNode, 
-  nodes: ArchiveNode[], 
-  level?: number 
-}) => {
+const LINE_HEIGHT = 24;
+const FONT_SIZE = 14;
+const PADDING_V = 60;
+const PADDING_H = 72;
+const CHAR_WIDTH = 8.4;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getTextIndexFromPosition(lines: string[], line: number, char: number) {
+  let index = 0;
+  for (let i = 0; i < line; i += 1) {
+    index += (lines[i] ?? '').length + 1;
+  }
+  return index + char;
+}
+
+function formatRuntime(startedAt: number) {
+  const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const hours = String(Math.floor(elapsed / 3600)).padStart(2, '0');
+  const minutes = String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0');
+  const seconds = String(elapsed % 60).padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function matchesDirectoryQuery(node: ArchiveNode, nodes: ArchiveNode[], query: string): boolean {
+  if (!query) {
+    return true;
+  }
+
+  const haystack = `${node.title} ${node.technicalId}`.toLowerCase();
+  if (haystack.includes(query)) {
+    return true;
+  }
+
+  return nodes
+    .filter((candidate) => candidate.parentId === node.id)
+    .some((child) => matchesDirectoryQuery(child, nodes, query));
+}
+
+function renderInlineContent(text: string) {
+  return text
+    .split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+    .filter(Boolean)
+    .map((segment, index) => {
+      if (segment.startsWith('**') && segment.endsWith('**')) {
+        const content = segment.slice(2, -2);
+        return (
+          <React.Fragment key={`bold-${index}`}>
+            <span className="md-marker">**</span>
+            <span className="md-bold">{content}</span>
+            <span className="md-marker">**</span>
+          </React.Fragment>
+        );
+      }
+
+      if (segment.startsWith('`') && segment.endsWith('`')) {
+        const content = segment.slice(1, -1);
+        return (
+          <React.Fragment key={`code-${index}`}>
+            <span className="md-marker">`</span>
+            <span className="md-inline-code">{content}</span>
+            <span className="md-marker">`</span>
+          </React.Fragment>
+        );
+      }
+
+      return <React.Fragment key={`text-${index}`}>{segment}</React.Fragment>;
+    });
+}
+
+function renderCodeTokens(line: string) {
+  if (!line) {
+    return <span className="text-white/20"> </span>;
+  }
+
+  let hasCommand = false;
+
+  return line.split(/(\s+)/).filter(Boolean).map((chunk, index) => {
+    if (/^\s+$/.test(chunk)) {
+      return <span key={`space-${index}`}>{chunk}</span>;
+    }
+
+    let className = 'text-white/65';
+
+    if (!hasCommand) {
+      className = 'text-[#45d1ff]';
+      hasCommand = true;
+    } else if (/^--/.test(chunk)) {
+      className = 'text-primary/75';
+    } else if (/^".*"$|^'.*'$/.test(chunk)) {
+      className = 'text-emerald-300/80';
+    } else if (/^\d+(\.\d+)?$/.test(chunk)) {
+      className = 'text-primary';
+    } else if (/^[A-Z_][A-Z0-9_-]*$/.test(chunk)) {
+      className = 'text-primary/60';
+    }
+
+    return (
+      <span key={`token-${index}`} className={className}>
+        {chunk}
+      </span>
+    );
+  });
+}
+type FileSystemNodeProps = {
+  node: ArchiveNode;
+  nodes: ArchiveNode[];
+  level?: number;
+  query: string;
+};
+
+const FileSystemNode = ({ node, nodes, level = 0, query }: FileSystemNodeProps) => {
   const { selectedNodeId, expandedFolderIds, setSelectedNodeId, toggleFolder } = useNoteStore();
   const isExpanded = expandedFolderIds.includes(node.id);
   const isSelected = selectedNodeId === node.id;
-  
-  const children = nodes.filter(n => n.parentId === node.id);
-  const hasChildren = children.length > 0;
+  const normalizedQuery = query.trim().toLowerCase();
+
+  const children = nodes.filter((candidate) => candidate.parentId === node.id);
+  const visibleChildren = children.filter((child) => matchesDirectoryQuery(child, nodes, normalizedQuery));
+  const shouldRender = matchesDirectoryQuery(node, nodes, normalizedQuery);
+
+  if (!shouldRender) {
+    return null;
+  }
 
   const handleSelect = () => {
     if (node.type === 'folder') {
@@ -57,418 +175,852 @@ const FileSystemNode = ({
 
   return (
     <div className="select-none">
-      <div 
+      <button
+        type="button"
         onClick={handleSelect}
         className={cn(
-          "flex items-center gap-2 py-1.5 px-2 cursor-pointer rounded transition-all group",
-          isSelected ? "bloom-active" : "hover:bg-white/5",
-          level > 0 && "ml-4 border-l border-white/10"
+          'group flex w-full items-center gap-2 rounded-sm border px-3 py-2 text-left transition-all',
+          isSelected
+            ? 'border-primary/40 bg-primary/10 shadow-[0_0_16px_rgba(255,255,0,0.08)]'
+            : 'border-transparent hover:border-primary/15 hover:bg-white/5',
+          level > 0 && 'ml-3 w-[calc(100%-0.75rem)] border-l border-primary/10'
         )}
-        style={{ paddingLeft: `${level * 4 + 8}px` }}
-        data-context-target={node.id}
-        data-context-type={node.type === 'folder' ? 'FOLDER' : 'TASK'}
-        data-context-name={node.title}
+        style={{ paddingLeft: `${level * 14 + 12}px` }}
       >
-        {node.type === 'folder' && (
-          <span className="text-primary/40 group-hover:text-primary transition-colors">
+        {node.type === 'folder' ? (
+          <span className="text-primary/50 group-hover:text-primary">
             {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </span>
+        ) : (
+          <span className="w-[14px]" />
         )}
-        <span className={cn(
-          "text-primary transition-colors",
-          isSelected ? "text-primary" : "text-primary/60 group-hover:text-primary"
-        )}>
+        <span className={cn('text-primary/60 transition-colors', isSelected && 'text-primary')}>
           {node.type === 'folder' ? (isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />) : <FileText size={14} />}
         </span>
-        <div className="flex flex-col overflow-hidden">
-          {node.type === 'note' && (
-            <span className="text-[8px] font-mono text-primary/30 leading-none">{node.technicalId}</span>
-          )}
-          <span className={cn(
-            "text-[11px] font-mono uppercase tracking-tight truncate",
-            isSelected ? "text-primary font-bold glow-text" : "text-white/70 group-hover:text-primary"
-          )}>
+        <div className="min-w-0 flex-1">
+          <div className="text-[9px] uppercase tracking-[0.24em] text-primary/25">{node.technicalId}</div>
+          <div
+            className={cn(
+              'truncate text-[11px] uppercase tracking-[0.18em] transition-colors',
+              isSelected ? 'text-primary' : 'text-white/55 group-hover:text-white/80'
+            )}
+          >
             {node.type === 'folder' ? `[${node.title}]` : node.title}
-          </span>
+          </div>
         </div>
-      </div>
-      
-      {node.type === 'folder' && isExpanded && (
-        <div className="mt-1">
-          {children.map(child => (
-            <FileSystemNode key={child.id} node={child} nodes={nodes} level={level + 1} />
+      </button>
+
+      {node.type === 'folder' && isExpanded && visibleChildren.length > 0 ? (
+        <div className="mt-1 space-y-1">
+          {visibleChildren.map((child) => (
+            <FileSystemNode key={child.id} node={child} nodes={nodes} level={level + 1} query={query} />
           ))}
         </div>
-      )}
+      ) : null}
     </div>
   );
 };
 
-const LINE_HEIGHT = 24;
-const FONT_SIZE = 14;
-const PADDING_V = 60;
-const PADDING_H = 80;
-const CHAR_WIDTH = 8.4; // Precise for JetBrains Mono at 14px
+type CodeFenceBlockProps = {
+  language: string;
+  codeLines: string[];
+  startLine: number;
+  closingLine: number | null;
+  activeLine: number;
+  onCopy: (value: string) => void;
+};
+
+const CodeFenceBlock = ({ language, codeLines, startLine, closingLine, activeLine, onCopy }: CodeFenceBlockProps) => {
+  const label = language || 'shell.commands';
+  const codeValue = codeLines.join('\n');
+
+  return (
+    <>
+      <div className="md-line md-code-line md-code-line-start flex items-center gap-3 px-5" data-active={startLine === activeLine}>
+        <span className="md-marker">```</span>
+        <span className="text-[10px] uppercase tracking-[0.26em] text-primary/75">{label}</span>
+        <button
+          type="button"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onCopy(codeValue);
+          }}
+          className="pointer-events-auto ml-auto inline-flex items-center gap-2 border border-primary/20 px-3 py-1 text-[9px] uppercase tracking-[0.22em] text-primary/60 transition hover:border-primary/50 hover:text-primary"
+        >
+          <Copy size={12} />
+          Copy_Buffer
+        </button>
+      </div>
+
+      {codeLines.map((line, index) => {
+        const lineNumber = String(index + 1).padStart(2, '0');
+        const sourceLine = startLine + index + 1;
+        return (
+          <div key={`code-row-${sourceLine}`} className="md-line md-code-line flex items-center gap-4 px-5" data-active={sourceLine === activeLine}>
+            <span className="w-5 text-[9px] uppercase tracking-[0.18em] text-primary/25">{lineNumber}</span>
+            <div className="min-w-0 flex-1 whitespace-pre text-[13px]">{renderCodeTokens(line)}</div>
+          </div>
+        );
+      })}
+
+      {closingLine !== null ? (
+        <div className="md-line md-code-line md-code-line-end flex items-center gap-3 px-5" data-active={closingLine === activeLine}>
+          <span className="md-marker">```</span>
+          <span className="text-[10px] uppercase tracking-[0.24em] text-white/20">Buffer_Secured</span>
+        </div>
+      ) : null}
+    </>
+  );
+};
+
+type TerminalRendererProps = {
+  text: string;
+  activeLine: number;
+  onToggleChecklist: (lineIndex: number) => void;
+  onCopyCode: (value: string) => void;
+};
+
+const TerminalRenderer = ({ text, activeLine, onToggleChecklist, onCopyCode }: TerminalRendererProps) => {
+  if (!text) {
+    return null;
+  }
+
+  const lines = text.split('\n');
+  const renderedBlocks: React.ReactNode[] = [];
+  let lineIndex = 0;
+
+  while (lineIndex < lines.length) {
+    const line = lines[lineIndex];
+
+    if (line.startsWith('```')) {
+      const startLine = lineIndex;
+      const language = line.slice(3).trim();
+      lineIndex += 1;
+
+      const codeLines: string[] = [];
+      while (lineIndex < lines.length && !lines[lineIndex].startsWith('```')) {
+        codeLines.push(lines[lineIndex]);
+        lineIndex += 1;
+      }
+
+      const closingLine = lineIndex < lines.length && lines[lineIndex].startsWith('```') ? lineIndex : null;
+
+      renderedBlocks.push(
+        <CodeFenceBlock
+          key={`code-${startLine}`}
+          language={language}
+          codeLines={codeLines}
+          startLine={startLine}
+          closingLine={closingLine}
+          activeLine={activeLine}
+          onCopy={onCopyCode}
+        />
+      );
+
+      if (closingLine !== null) {
+        lineIndex += 1;
+      }
+
+      continue;
+    }
+    const isActive = lineIndex === activeLine;
+    const checklistMatch = line.match(/^- \[( |x)\] (.*)$/);
+
+    if (!line.trim()) {
+      renderedBlocks.push(
+        <div key={`line-${lineIndex}`} className="md-line" data-active={isActive}>
+          {' '}
+        </div>
+      );
+      lineIndex += 1;
+      continue;
+    }
+
+    if (checklistMatch) {
+      const checked = checklistMatch[1] === 'x';
+      renderedBlocks.push(
+        <div key={`line-${lineIndex}`} className="md-line flex items-center gap-3" data-active={isActive}>
+          <button
+            type="button"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onToggleChecklist(lineIndex);
+            }}
+            className={cn('md-checkbox pointer-events-auto', checked && 'checked')}
+          >
+            {checked ? <CheckCircle2 size={12} className="text-primary" /> : null}
+          </button>
+          <span className="md-marker">- [{checked ? 'x' : ' '}]</span>
+          <span className={cn('whitespace-pre text-[14px]', checked ? 'text-white/35 line-through' : 'text-white/75')}>
+            {renderInlineContent(checklistMatch[2])}
+          </span>
+        </div>
+      );
+      lineIndex += 1;
+      continue;
+    }
+
+    if (line.startsWith('### ')) {
+      renderedBlocks.push(
+        <div key={`line-${lineIndex}`} className="md-line flex items-center gap-3 text-[17px] font-semibold uppercase tracking-[0.1em] text-primary/90" data-active={isActive}>
+          <span className="md-marker">###</span>
+          <span className="drop-shadow-[0_0_10px_rgba(255,255,0,0.28)]">{line.slice(4)}</span>
+        </div>
+      );
+      lineIndex += 1;
+      continue;
+    }
+
+    if (line.startsWith('## ')) {
+      renderedBlocks.push(
+        <div key={`line-${lineIndex}`} className="md-line flex items-center gap-3 text-[21px] font-semibold uppercase tracking-[0.08em] text-primary" data-active={isActive}>
+          <span className="md-marker">##</span>
+          <span className="drop-shadow-[0_0_12px_rgba(255,255,0,0.32)]">{line.slice(3)}</span>
+        </div>
+      );
+      lineIndex += 1;
+      continue;
+    }
+
+    if (line.startsWith('# ')) {
+      renderedBlocks.push(
+        <div key={`line-${lineIndex}`} className="md-line flex items-center gap-3 text-[26px] font-bold uppercase tracking-[0.08em] text-primary" data-active={isActive}>
+          <span className="md-marker">#</span>
+          <span className="drop-shadow-[0_0_16px_rgba(255,255,0,0.42)]">{line.slice(2)}</span>
+        </div>
+      );
+      lineIndex += 1;
+      continue;
+    }
+
+    if (/^-{3,}$/.test(line.trim())) {
+      renderedBlocks.push(
+        <div key={`line-${lineIndex}`} className="md-line flex items-center gap-3" data-active={isActive}>
+          <span className="md-marker">---</span>
+          <span className="h-px flex-1 bg-gradient-to-r from-primary/0 via-primary/50 to-primary/0 shadow-[0_0_12px_rgba(255,255,0,0.25)]" />
+        </div>
+      );
+      lineIndex += 1;
+      continue;
+    }
+
+    if (line.startsWith('> ')) {
+      renderedBlocks.push(
+        <div key={`line-${lineIndex}`} className="md-line flex items-center gap-3 border-l border-primary/30 pl-4 text-[14px] italic text-white/55" data-active={isActive}>
+          <span className="md-marker">&gt;</span>
+          <span className="whitespace-pre">{renderInlineContent(line.slice(2))}</span>
+        </div>
+      );
+      lineIndex += 1;
+      continue;
+    }
+
+    if (line.startsWith('>> ')) {
+      renderedBlocks.push(
+        <div key={`line-${lineIndex}`} className="md-line flex items-center gap-3 text-[14px] text-white/70" data-active={isActive}>
+          <span className="md-marker">&gt;&gt;</span>
+          <span className="whitespace-pre uppercase tracking-[0.06em]">{renderInlineContent(line.slice(3))}</span>
+        </div>
+      );
+      lineIndex += 1;
+      continue;
+    }
+
+    renderedBlocks.push(
+      <div key={`line-${lineIndex}`} className="md-line whitespace-pre text-[14px] text-white/76" data-active={isActive}>
+        {renderInlineContent(line)}
+      </div>
+    );
+    lineIndex += 1;
+  }
+
+  return <div className="space-y-0 font-mono text-[14px]">{renderedBlocks}</div>;
+};
 
 export default function NotesPage() {
   const { nodes, selectedNodeId, updateNode, addNode } = useNoteStore();
   const { addTask } = useTaskStore();
+  const { logs, addLog } = useSystemLogStore();
+  const { metrics, updateMetrics } = useHardwareMetrics();
+  const { heartbeatMs, cpuUsage, memUsage, netSpeed, tick } = useChronosStore();
   const [isEditing, setIsEditing] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [directoryQuery, setDirectoryQuery] = useState('');
+  const [editorQuery, setEditorQuery] = useState('');
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const sessionStartRef = useRef(Date.now());
 
-  const selectedNode = useMemo(() => 
-    nodes.find(n => n.id === selectedNodeId && n.type === 'note'),
+  const selectedNode = useMemo(
+    () => nodes.find((node) => node.id === selectedNodeId && node.type === 'note'),
     [nodes, selectedNodeId]
   );
 
+  const selectedContainerId = useMemo(() => {
+    const selected = nodes.find((node) => node.id === selectedNodeId);
+    if (!selected) {
+      return 'f2';
+    }
+    return selected.type === 'folder' ? selected.id : selected.parentId;
+  }, [nodes, selectedNodeId]);
+
   const [cursor, setCursor] = useState({ line: 0, char: 0 });
+  const selectedContent = selectedNode?.content ?? '';
+  const lineCount = useMemo(() => (selectedContent ? selectedContent.split('\n').length : 0), [selectedContent]);
+  const wordCount = useMemo(() => selectedContent.trim().split(/\s+/).filter(Boolean).length, [selectedContent]);
+
+  const noteMatchCount = useMemo(() => {
+    if (!editorQuery.trim() || !selectedContent) {
+      return 0;
+    }
+
+    const matches = selectedContent.match(new RegExp(escapeRegExp(editorQuery.trim()), 'gi'));
+    return matches?.length ?? 0;
+  }, [editorQuery, selectedContent]);
 
   const updateCursor = useCallback(() => {
-    if (!editorRef.current) return;
+    if (!editorRef.current) {
+      return;
+    }
+
     const textBefore = editorRef.current.value.substring(0, editorRef.current.selectionStart);
     const lines = textBefore.split('\n');
-    setCursor({
-      line: lines.length - 1,
-      char: lines[lines.length - 1].length
-    });
+    setCursor({ line: Math.max(lines.length - 1, 0), char: lines[lines.length - 1]?.length ?? 0 });
   }, []);
 
-  const handleEditorChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    if (selectedNode) {
-      updateNode(selectedNode.id, { content: e.target.value });
-      updateCursor();
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const textarea = e.currentTarget;
-    const { selectionStart, selectionEnd, value } = textarea;
-
-    if (e.key === 'Enter') {
-      ArkanAudio.playFast('system_execute_clack_heavy');
-      setTimeout(() => {
-        const container = textarea.parentElement?.parentElement;
-        if (container) {
-          const cursorY = (value.substring(0, textarea.selectionStart).split('\n').length) * LINE_HEIGHT;
-          const containerHeight = container.clientHeight;
-          const scrollThreshold = containerHeight * 0.8;
-          
-          if (cursorY - container.scrollTop > scrollThreshold) {
-            container.scrollTo({
-              top: cursorY - containerHeight * 0.5,
-              behavior: 'smooth'
-            });
-          }
-        }
-        updateCursor();
-      }, 10);
-    } else if (e.key === 'Backspace') {
-      ArkanAudio.playFast('delete_chirp_back');
-      setTimeout(updateCursor, 0);
-    } else if (e.key === 'Tab') {
-      e.preventDefault();
-      ArkanAudio.playFast('key_tick_mechanical');
-      const newValue = value.substring(0, selectionStart) + "  " + value.substring(selectionEnd);
-      if (selectedNode) {
-        updateNode(selectedNode.id, { content: newValue });
-        setTimeout(() => {
-          textarea.selectionStart = textarea.selectionEnd = selectionStart + 2;
-          updateCursor();
-        }, 0);
-      }
-    } else if (e.key === ' ') {
-      ArkanAudio.playFast('thump_hollow_space');
-      setTimeout(updateCursor, 0);
-    } else {
-      ArkanAudio.playFast('key_tick_mechanical');
-      setTimeout(updateCursor, 0);
-    }
-  };
-
   useEffect(() => {
-    if (selectedNode) {
-      updateCursor();
+    if (!selectedNode) {
+      return;
     }
+
+    updateCursor();
+    requestAnimationFrame(() => editorRef.current?.focus());
   }, [selectedNode?.id, updateCursor]);
 
-  const extractTasks = () => {
-    if (!selectedNode?.content) return;
-    
-    const lines = selectedNode.content.split('\n');
-    const taskLines = lines.filter(line => line.trim().startsWith('- [ ]'));
-    
-    taskLines.forEach(line => {
-      const title = line.replace('- [ ]', '').trim();
-      addTask({
-        title: title || 'EXTRACTED_TASK',
-        status: 'todo',
-        priority: 'medium',
-        projectId: 'neural_archive'
-      });
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      updateMetrics();
+      tick();
+    }, 4000);
+
+    return () => window.clearInterval(intervalId);
+  }, [tick, updateMetrics]);
+  const handleEditorChange = useCallback(
+    (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+      if (!selectedNode) {
+        return;
+      }
+
+      updateNode(selectedNode.id, { content: event.target.value });
+      updateCursor();
+    },
+    [selectedNode, updateNode, updateCursor]
+  );
+
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      const textarea = event.currentTarget;
+      const { selectionStart, selectionEnd, value } = textarea;
+
+      if (event.key === 'Enter') {
+        ArkanAudio.playFast('system_execute_clack_heavy');
+        window.setTimeout(updateCursor, 0);
+        return;
+      }
+
+      if (event.key === 'Backspace') {
+        ArkanAudio.playFast('delete_chirp_back');
+        window.setTimeout(updateCursor, 0);
+        return;
+      }
+
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        ArkanAudio.playFast('key_tick_mechanical');
+        const nextValue = value.slice(0, selectionStart) + '  ' + value.slice(selectionEnd);
+        if (selectedNode) {
+          updateNode(selectedNode.id, { content: nextValue });
+          window.setTimeout(() => {
+            textarea.selectionStart = textarea.selectionEnd = selectionStart + 2;
+            updateCursor();
+          }, 0);
+        }
+        return;
+      }
+
+      if (event.key === ' ') {
+        ArkanAudio.playFast('thump_hollow_space');
+      } else {
+        ArkanAudio.playFast('key_tick_mechanical');
+      }
+
+      window.setTimeout(updateCursor, 0);
+    },
+    [selectedNode, updateCursor, updateNode]
+  );
+
+  const handleEditorMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!selectedNode || !editorRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      const container = event.currentTarget;
+      const rect = container.getBoundingClientRect();
+      const lines = selectedContent.split('\n');
+      const relativeY = event.clientY - rect.top + container.scrollTop - PADDING_V;
+      const relativeX = event.clientX - rect.left + container.scrollLeft - PADDING_H;
+      const line = clamp(Math.floor(relativeY / LINE_HEIGHT), 0, Math.max(lines.length - 1, 0));
+      const char = clamp(Math.round(relativeX / CHAR_WIDTH), 0, (lines[line] ?? '').length);
+      const index = getTextIndexFromPosition(lines, line, char);
+
+      editorRef.current.focus();
+      editorRef.current.selectionStart = editorRef.current.selectionEnd = index;
+      updateCursor();
+    },
+    [selectedContent, selectedNode, updateCursor]
+  );
+
+  const handleCreateEntry = useCallback(() => {
+    const technicalId = `NT-${Math.floor(Math.random() * 900) + 100}`;
+    const title = 'NEW_ENTRY';
+    const parentId = selectedContainerId ?? null;
+
+    addNode({
+      technicalId,
+      title,
+      type: 'note',
+      parentId,
+      content:
+        '# NEW_ENTRY\n\nInitialize archive payload and continue the protocol.\n\n```shell.commands\narkan --init --note-id "NEW_ENTRY"\nlink archive --priority "high"\n```\n\n### ACTION_ITEMS\n\n- [ ] Draft initial sequence\n- [ ] Bind note to current operation',
     });
-    
-    ArkanAudio.playFast('system_purge');
-    alert(`${taskLines.length} TASKS_EXTRACTED_TO_OPERATIONS`);
-  };
 
-  const rootNodes = useMemo(() => nodes.filter(n => n.parentId === null), [nodes]);
+    addLog('ARCHIVE_ENTRY_INITIALIZED', 'status');
+    ArkanAudio.playFast('system_engage');
+    window.setTimeout(() => {
+      editorRef.current?.focus();
+      updateCursor();
+    }, 0);
+  }, [addLog, addNode, selectedContainerId, updateCursor]);
 
-  const TerminalRenderer = ({ text }: { text: string }) => {
-    if (!text) return null;
-    const lines = text.split('\n');
+  const handleToggleChecklist = useCallback(
+    (lineIndex: number) => {
+      if (!selectedNode) {
+        return;
+      }
 
-    const parseLine = (lineText: string) => {
-      let html = lineText;
+      const lines = selectedContent.split('\n');
+      const match = lines[lineIndex]?.match(/^- \[( |x)\] (.*)$/);
+      if (!match) {
+        return;
+      }
 
-      // 1. Processar BOLD (**text**)
-      html = html.replace(/\*\*(.*?)\*\*/g, 
-        '<span class="md-marker">**</span><span class="md-bold">$1</span><span class="md-marker">**</span>'
-      );
+      const nextMark = match[1] === 'x' ? ' ' : 'x';
+      lines[lineIndex] = `- [${nextMark}] ${match[2]}`;
+      updateNode(selectedNode.id, { content: lines.join('\n') });
+      addLog(`CHECKLIST_NODE_${nextMark === 'x' ? 'ENGAGED' : 'RESET'}`, 'sync');
+      ArkanAudio.playFast('system_engage');
 
-      // 2. Processar CHECKBOXES ([ ] e [x])
-      html = html.replace(/^\[ \] (.*)/, 
-        '<div class="flex items-center gap-2"><span class="md-marker">[ ]</span> <span class="text-white/80">$1</span></div>'
-      );
-      html = html.replace(/^\[x\] (.*)/, 
-        '<div class="flex items-center gap-2 opacity-40"><span class="md-marker">[x]</span> <span class="line-through">$1</span></div>'
-      );
+      window.setTimeout(() => {
+        if (!editorRef.current) {
+          return;
+        }
 
-      return { __html: html };
-    };
+        const nextIndex = getTextIndexFromPosition(lines, lineIndex, Math.min(6, lines[lineIndex].length));
+        editorRef.current.focus();
+        editorRef.current.selectionStart = editorRef.current.selectionEnd = nextIndex;
+        updateCursor();
+      }, 0);
+    },
+    [addLog, selectedContent, selectedNode, updateCursor, updateNode]
+  );
 
-    return (
-      <div className="font-mono text-[14px] w-full">
-        {lines.map((line, i) => {
-          // H1 Logic
-          if (line.startsWith('# ')) {
-            return (
-              <div key={i} className="flex items-center h-[24px] text-[22px] font-bold text-primary drop-shadow-[0_0_10px_#FFFF00]">
-                <span className="md-marker mr-2">#</span>{line.substring(2)}
-              </div>
-            );
-          }
+  const handleCopyCode = useCallback(
+    async (value: string) => {
+      try {
+        await navigator.clipboard.writeText(value);
+        addLog('MARKDOWN_BUFFER_COPIED', 'status');
+        ArkanAudio.playFast('system_engage');
+      } catch {
+        addLog('CLIPBOARD_ACCESS_DENIED', 'error');
+      }
+    },
+    [addLog]
+  );
 
-          // H2 Logic
-          if (line.startsWith('## ')) {
-            return (
-              <div key={i} className="flex items-center h-[24px] text-[18px] font-bold text-primary/90">
-                <span className="md-marker mr-2">##</span>{line.substring(3)}
-              </div>
-            );
-          }
+  const handleExtractTasks = useCallback(async () => {
+    if (!selectedContent) {
+      return;
+    }
 
-          // Default Inline Parsing
-          return (
-            <div 
-              key={i} 
-              className="flex items-center h-[24px] whitespace-pre"
-              dangerouslySetInnerHTML={parseLine(line)}
-            />
-          );
-        })}
-      </div>
+    const lines = selectedContent.split('\n');
+    const taskLines = lines.filter((line) => line.trim().startsWith('- [ ]'));
+
+    await Promise.all(
+      taskLines.map((line) =>
+        addTask({
+          title: line.replace('- [ ]', '').trim() || 'EXTRACTED_TASK',
+          status: 'todo',
+          priority: 'medium',
+          projectId: 'neural_archive',
+        })
+      )
     );
-  };
 
+    addLog(`${taskLines.length}_TASKS_EXTRACTED_TO_OPERATIONS`, 'sync');
+    ArkanAudio.playFast('system_purge');
+  }, [addLog, addTask, selectedContent]);
 
+  const handleAiAction = useCallback(
+    (message: string) => {
+      addLog(message, 'status');
+      ArkanAudio.playFast('system_engage');
+    },
+    [addLog]
+  );
+
+  const rootNodes = useMemo(() => nodes.filter((node) => node.parentId === null), [nodes]);
+  const visibleRootNodes = useMemo(
+    () => rootNodes.filter((node) => matchesDirectoryQuery(node, nodes, directoryQuery.trim().toLowerCase())),
+    [directoryQuery, nodes, rootNodes]
+  );
+  const recentLogs = useMemo(() => logs.slice(0, 4), [logs]);
 
   return (
-    <div className="flex h-screen w-full technical-grid relative bg-black text-gray-300 font-display selection-yellow overflow-hidden">
-      {/* Sidebar Wrapper */}
-      <div className="relative flex h-full shrink-0 z-20">
-        <section className={cn(
-          "border-r border-border-dark flex flex-col bg-surface-dark/40 backdrop-blur-sm transition-all duration-300 ease-in-out",
-          sidebarCollapsed ? "w-0 overflow-hidden border-none" : "w-80"
-        )}>
-          <div className="p-6 border-b border-border-dark">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xs font-mono tracking-widest text-primary/60 uppercase">Archive_Directory</h2>
-              <span className="text-[10px] font-mono text-primary/40">V 4.0.2</span>
+    <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-[#020200] text-white">
+      <div className="arkan-grid-overlay opacity-20" />
+      <div className="crt-overlay absolute inset-0 opacity-20" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,0,0.08),transparent_55%)]" />
+
+      <div className="relative z-10 flex h-full min-h-0 w-full overflow-hidden">
+        <div className="relative flex h-full shrink-0">
+          <section className={cn('flex h-full flex-col border-r border-primary/10 bg-black/70 backdrop-blur-sm transition-all duration-300', sidebarCollapsed ? 'w-0 overflow-hidden border-r-0' : 'w-80')}>
+            <div className="border-b border-primary/10 px-5 py-5">
+              <div className="mb-5 flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.28em] text-primary/50">Archive_Directory</div>
+                  <div className="mt-1 text-[9px] uppercase tracking-[0.26em] text-white/20">Live_Markdown_v2</div>
+                </div>
+                <div className="border border-primary/20 px-2 py-1 text-[9px] uppercase tracking-[0.22em] text-primary/60">v4.0.2</div>
+              </div>
+
+              <button type="button" onClick={handleCreateEntry} className="flex w-full items-center justify-center gap-2 border border-primary/50 bg-primary/8 px-4 py-3 text-[11px] uppercase tracking-[0.24em] text-primary transition hover:bg-primary hover:text-black">
+                <Plus size={16} />
+                Initialize_Entry
+              </button>
+
+              <label className="mt-4 flex items-center gap-3 border border-primary/15 bg-black/80 px-3 py-3 text-primary/40 focus-within:border-primary/40 focus-within:text-primary/70">
+                <Search size={14} />
+                <input
+                  value={directoryQuery}
+                  onChange={(event) => setDirectoryQuery(event.target.value)}
+                  placeholder="QUERY_ACTIVE..."
+                  className="w-full bg-transparent text-[11px] uppercase tracking-[0.18em] text-white/65 outline-none placeholder:text-white/18"
+                />
+              </label>
             </div>
-            <button 
-              onClick={() => {
-                addNode({
-                  technicalId: `NT-${Math.floor(Math.random() * 900) + 100}`,
-                  title: 'NEW_ENTRY',
-                  type: 'note',
-                  parentId: null,
-                  content: '# NEW_ENTRY\n\nStart typing...'
-                });
-                ArkanAudio.playFast('system_engage');
-              }}
-              className="w-full py-3 px-4 border border-primary text-primary hover:bg-primary hover:text-black transition-all duration-300 rounded-sm font-mono text-sm tracking-tighter glow-border flex items-center justify-center gap-2 group shadow-[0_0_10px_rgba(249,249,6,0.2)]"
-            >
-              <Plus size={18} />
-              <span>+ NEW_ENTRY</span>
-            </button>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
-            <h3 className="text-[10px] font-mono tracking-[0.2em] text-white/30 uppercase mb-4 px-2">File_System</h3>
-            <div className="space-y-1">
-              {rootNodes.map(node => (
-                <FileSystemNode key={node.id} node={node} nodes={nodes} />
+
+            <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4 custom-scrollbar">
+              {visibleRootNodes.map((node) => (
+                <FileSystemNode key={node.id} node={node} nodes={nodes} query={directoryQuery} />
               ))}
             </div>
-          </div>
 
-          <div className="p-4 border-t border-border-dark bg-black/40">
-            <div className="flex items-center gap-2 text-[10px] font-mono text-white/20">
-              <Cpu size={12} />
-              <span>74.2 GB / 100 GB REMAINING</span>
+            <div className="border-t border-primary/10 px-5 py-4">
+              <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-white/25">
+                <span>Storage_Grid</span>
+                <span className="text-primary/60">74.2GB</span>
+              </div>
+              <div className="mt-3 h-1 bg-white/5">
+                <div className="h-full w-[74%] bg-primary shadow-[0_0_10px_rgba(255,255,0,0.5)]" />
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
 
-        {/* Toggle Button */}
-        <button 
-          onClick={() => {
-            setSidebarCollapsed(!sidebarCollapsed);
-            ArkanAudio.playFast('key_tick_mechanical');
-          }}
-          className={cn(
-            "absolute top-1/2 -translate-y-1/2 w-5 h-16 bg-border-dark border border-white/10 flex items-center justify-center text-primary/60 hover:text-primary z-30 rounded-r-md transition-all duration-300 group",
-            sidebarCollapsed ? "left-0" : "left-80"
-          )}
-          title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-        >
-          <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-          {sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-        </button>
-      </div>
-
-      {/* Main Content - Editor */}
-      <main className="flex-1 flex flex-col relative overflow-hidden bg-black/20">
-        <div className="flex-1 overflow-hidden flex">
-          {/* Editor Area */}
-          <div 
-            className="flex-1 relative overflow-y-auto custom-scrollbar bg-black scroll-smooth"
-            onClick={() => editorRef.current?.focus()}
+          <button
+            type="button"
+            onClick={() => {
+              setSidebarCollapsed((current) => !current);
+              ArkanAudio.playFast('key_tick_mechanical');
+            }}
+            className={cn('absolute top-1/2 z-30 flex h-16 w-5 -translate-y-1/2 items-center justify-center border border-primary/15 bg-black/90 text-primary/60 transition hover:text-primary', sidebarCollapsed ? 'left-0' : 'left-80')}
+            title={sidebarCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
           >
-            {selectedNode ? (
-              <div className="relative min-h-full" style={{ padding: `${PADDING_V}px ${PADDING_H}px` }}>
-                
-                {/* Camada 1: O Cursor Técnico (Z-30) */}
-                <div 
-                  className="absolute z-30 w-[8px] bg-primary animate-[pulse_1s_steps(1)_infinite]"
-                  style={{
-                    height: `${LINE_HEIGHT - 6}px`,
-                    top: `${PADDING_V + (cursor.line * LINE_HEIGHT) + 3}px`,
-                    left: `${PADDING_H + (cursor.char * CHAR_WIDTH)}px`,
-                    pointerEvents: 'none'
-                  }}
-                />
-
-                {/* Camada 2: Renderizador Visual (Z-10) */}
-                <div className="relative z-10">
-                  <TerminalRenderer text={selectedNode.content || ''} />
-                </div>
-
-                {/* Camada 3: Input Invisível (Z-20) */}
-                <textarea
-                  ref={editorRef}
-                  value={selectedNode.content}
-                  onChange={handleEditorChange}
-                  onKeyDown={handleKeyDown}
-                  onSelect={updateCursor}
-                  spellCheck={false}
-                  className="absolute inset-0 w-full h-full bg-transparent text-transparent caret-transparent resize-none outline-none z-20 font-mono selection-yellow"
-                  style={{
-                    padding: `${PADDING_V}px ${PADDING_H}px`,
-                    fontSize: `${FONT_SIZE}px`,
-                    lineHeight: `${LINE_HEIGHT}px`,
-                    letterSpacing: '0px',
-                    fontFamily: '"JetBrains Mono", monospace'
-                  }}
-                />
-              </div>
-            ) : (
-              <div className="flex-1 flex items-center justify-center h-full">
-                <div className="text-center space-y-4">
-                  <FileSearch size={48} className="text-primary/20 mx-auto" />
-                  <p className="text-primary/40 font-mono text-xs tracking-[0.3em] uppercase">SELECT_NODE_TO_INITIALIZE_BUFFER</p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Right Sidebar - AI Synapse */}
-          <aside className="w-80 border-l border-border-dark flex flex-col bg-surface-dark/60 backdrop-blur-md z-20">
-            <div className="p-6 border-b border-border-dark flex items-center gap-3">
-              <div className="relative">
-                <BrainCircuit className="text-primary animate-pulse" size={24} />
-                <div className="absolute -top-1 -right-1 w-2 h-2 bg-primary rounded-full blur-[2px]"></div>
-              </div>
-              <h2 className="text-xs font-mono tracking-widest text-white/80 uppercase">AI_Synapse_Module</h2>
-            </div>
-            
-            <div className="flex-1 p-6 space-y-6 overflow-y-auto custom-scrollbar">
-              <div className="space-y-3">
-                <label className="text-[10px] font-mono text-white/30 uppercase tracking-widest">Available_Operations</label>
-                <button 
-                  onClick={extractTasks}
-                  className="w-full text-left p-4 bg-white/5 border border-white/10 hover:border-primary/50 hover:bg-primary/5 transition-all group rounded-sm"
-                >
-                  <div className="flex items-center gap-3">
-                    <TaskAlt className="text-primary/60 group-hover:text-primary" size={18} />
-                    <span className="text-xs font-mono text-white/70 group-hover:text-primary">EXTRACT_TASKS_FROM_TEXT</span>
-                  </div>
-                </button>
-                <button className="w-full text-left p-4 bg-white/5 border border-white/10 hover:border-primary/50 hover:bg-primary/5 transition-all group rounded-sm">
-                  <div className="flex items-center gap-3">
-                    <Summarize className="text-primary/60 group-hover:text-primary" size={18} />
-                    <span className="text-xs font-mono text-white/70 group-hover:text-primary">GENERATE_LOG_SUMMARY</span>
-                  </div>
-                </button>
-                <button className="w-full text-left p-4 bg-white/5 border border-white/10 hover:border-primary/50 hover:bg-primary/5 transition-all group rounded-sm">
-                  <div className="flex items-center gap-3">
-                    <Troubleshoot className="text-primary/60 group-hover:text-primary" size={18} />
-                    <span className="text-xs font-mono text-white/70 group-hover:text-primary">SEMANTIC_ANALYSIS</span>
-                  </div>
-                </button>
-              </div>
-
-              <div className="space-y-4 pt-4 border-t border-border-dark">
-                <div className="flex justify-between items-center">
-                  <span className="text-[10px] font-mono text-white/30 uppercase">Context_Awareness</span>
-                  <span className="text-[10px] font-mono text-primary">84%</span>
-                </div>
-                <div className="w-full bg-white/5 h-1 rounded-full overflow-hidden">
-                  <div className="h-full bg-primary w-[84%] shadow-[0_0_8px_rgba(249,249,6,0.5)]"></div>
-                </div>
-              </div>
-
-              <div className="p-4 bg-primary/5 border border-primary/20 rounded-sm">
-                <h4 className="text-[10px] font-mono text-primary mb-2 flex items-center gap-2">
-                  <Sparkles size={14} />
-                  SUGGESTION_ACTIVE
-                </h4>
-                <p className="text-[11px] text-gray-400 font-mono leading-tight">
-                  Detection of hardware technical terms. Would you like to link this archive to "CENTRAL_HARDWARE_INDEX"?
-                </p>
-                <div className="flex gap-2 mt-3">
-                  <button className="px-3 py-1 bg-primary text-black text-[10px] font-mono font-bold hover:brightness-125 transition-all">ACCEPT</button>
-                  <button className="px-3 py-1 border border-white/20 text-white/40 text-[10px] font-mono hover:text-white transition-all">IGNORE</button>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-6 border-t border-border-dark">
-              <div className="text-[10px] font-mono text-white/20 flex flex-col gap-1">
-                <div className="flex justify-between">
-                  <span>MODEL_ID:</span>
-                  <span className="text-white/40">NEURO_GPT_8.0</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>LATENCY:</span>
-                  <span className="text-white/40">12ms</span>
-                </div>
-              </div>
-            </div>
-          </aside>
+            {sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+          </button>
         </div>
-      </main>
+
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <header className="border-b border-primary/10 bg-black/75 px-6 py-4 backdrop-blur-sm">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-4 text-[10px] uppercase tracking-[0.28em] text-white/35">
+                  <span className="text-primary">System_Status: Operational</span>
+                  <span>CPU: {metrics.cpu}%</span>
+                  <span>MEM: {metrics.ram.toFixed(1)}GB</span>
+                  <span>NET: {netSpeed}</span>
+                </div>
+                <div className="text-[11px] uppercase tracking-[0.3em] text-white/18">Neural_Archive / In-Situ_Renderer / Twin_Layer_Protocol</div>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <label className="flex h-10 min-w-[280px] items-center gap-3 border border-primary/15 bg-black/80 px-3 text-primary/40 focus-within:border-primary/40 focus-within:text-primary/70">
+                  <Search size={14} />
+                  <input
+                    value={editorQuery}
+                    onChange={(event) => setEditorQuery(event.target.value)}
+                    placeholder="SCAN_ACTIVE_BUFFER..."
+                    className="w-full bg-transparent text-[11px] uppercase tracking-[0.18em] text-white/70 outline-none placeholder:text-white/18"
+                  />
+                </label>
+                <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.22em] text-white/40">
+                  <div className="border border-primary/20 px-3 py-2 text-primary/75">{noteMatchCount}_MATCHES</div>
+                  <div className="inline-flex items-center gap-2 border border-primary/20 px-3 py-2 text-primary/80">
+                    <User size={12} />
+                    AL
+                  </div>
+                </div>
+              </div>
+            </div>
+          </header>
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            <section className="flex min-w-0 flex-1 flex-col overflow-hidden border-r border-primary/10">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-primary/10 bg-black/65 px-6 py-3">
+                <div className="flex min-w-0 items-center gap-4">
+                  <div className="border border-primary/35 px-3 py-1 text-[10px] uppercase tracking-[0.26em] text-primary shadow-[0_0_10px_rgba(255,255,0,0.18)]">
+                    {isEditing ? 'Live_Markdown_v2' : 'Read_Sync'}
+                  </div>
+                  <div className="min-w-0 truncate text-[11px] uppercase tracking-[0.24em] text-white/45">
+                    {selectedNode?.title ?? 'Neural_Sync_Protocol.md'}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 text-white/35">
+                  <button type="button" onClick={() => handleAiAction('NEURAL_ARCHIVE_SHARE_LINK_BUFFERED')} className="border border-primary/15 p-2 transition hover:border-primary/40 hover:text-primary">
+                    <Share2 size={14} />
+                  </button>
+                  <button type="button" onClick={() => handleAiAction('NEURAL_ARCHIVE_CONTEXT_MENU_ENGAGED')} className="border border-primary/15 p-2 transition hover:border-primary/40 hover:text-primary">
+                    <MoreVertical size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="relative flex-1 overflow-auto bg-black/55 custom-scrollbar" onMouseDown={handleEditorMouseDown}>
+                {selectedNode ? (
+                  <div className="relative min-h-full" style={{ padding: `${PADDING_V}px ${PADDING_H}px` }}>
+                    <div
+                      className="absolute z-30 w-[8px] bg-primary shadow-[0_0_14px_rgba(255,255,0,0.85)] animate-[block-pulse_1s_steps(1)_infinite]"
+                      style={{
+                        height: `${LINE_HEIGHT - 6}px`,
+                        top: `${PADDING_V + cursor.line * LINE_HEIGHT + 3}px`,
+                        left: `${PADDING_H + cursor.char * CHAR_WIDTH}px`,
+                        pointerEvents: 'none',
+                      }}
+                    />
+
+                    <div className="relative z-20 pointer-events-none">
+                      <TerminalRenderer text={selectedContent} activeLine={cursor.line} onToggleChecklist={handleToggleChecklist} onCopyCode={handleCopyCode} />
+                    </div>
+
+                    <textarea
+                      ref={editorRef}
+                      value={selectedContent}
+                      onChange={handleEditorChange}
+                      onKeyDown={handleKeyDown}
+                      onSelect={updateCursor}
+                      onFocus={() => setIsEditing(true)}
+                      onBlur={() => setIsEditing(false)}
+                      spellCheck={false}
+                      wrap="off"
+                      className="selection-yellow absolute inset-0 z-10 h-full w-full resize-none bg-transparent font-mono text-transparent caret-transparent outline-none"
+                      style={{
+                        padding: `${PADDING_V}px ${PADDING_H}px`,
+                        fontSize: `${FONT_SIZE}px`,
+                        lineHeight: `${LINE_HEIGHT}px`,
+                        letterSpacing: '0px',
+                        fontFamily: '"JetBrains Mono", monospace',
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="flex h-full items-center justify-center px-6">
+                    <div className="space-y-4 text-center">
+                      <FileSearch size={48} className="mx-auto text-primary/20" />
+                      <div className="text-[11px] uppercase tracking-[0.3em] text-primary/45">Select_Node_To_Initialize_Buffer</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <aside className="hidden w-80 shrink-0 flex-col border-l border-primary/10 bg-black/70 xl:flex">
+              <div className="border-b border-primary/10 px-6 py-5">
+                <div className="flex items-center gap-3">
+                  <BrainCircuit className="text-primary" size={20} />
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.28em] text-primary/65">AI_Synapse_Module</div>
+                    <div className="mt-1 text-[9px] uppercase tracking-[0.22em] text-white/20">Available_Operations</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5 custom-scrollbar">
+                <button type="button" onClick={() => void handleExtractTasks()} className="flex w-full items-center gap-3 border border-primary/15 bg-white/5 px-4 py-4 text-left transition hover:border-primary/35 hover:bg-primary/5">
+                  <TaskAlt size={18} className="text-primary/70" />
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-white/70">Extract_Subroutines</span>
+                </button>
+
+                <button type="button" onClick={() => handleAiAction('DOSSIER_SYNTHESIS_BUFFERED')} className="flex w-full items-center gap-3 border border-primary/15 bg-white/5 px-4 py-4 text-left transition hover:border-primary/35 hover:bg-primary/5">
+                  <FileText size={18} className="text-primary/70" />
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-white/70">Synthesize_Dossier</span>
+                </button>
+
+                <button type="button" onClick={() => handleAiAction('PATTERN_RECOGNITION_DISPATCHED')} className="flex w-full items-center gap-3 border border-primary/15 bg-white/5 px-4 py-4 text-left transition hover:border-primary/35 hover:bg-primary/5">
+                  <Search size={18} className="text-primary/70" />
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-white/70">Pattern_Recognition</span>
+                </button>
+
+                <div className="border border-primary/15 bg-primary/6 p-4">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.26em] text-primary">
+                    <Sparkles size={14} />
+                    Synergy_Suggestion
+                  </div>
+                  <p className="mt-3 text-[11px] leading-5 text-white/55">
+                    Neural patterns detect focus on markdown logic. Apply hierarchical scaling to headings for clarity.
+                  </p>
+                  <div className="mt-4 flex gap-2">
+                    <button type="button" onClick={() => handleAiAction('SUGGESTION_ACCEPTED_AND_BUFFERED')} className="bg-primary px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-black transition hover:brightness-110">
+                      Accept
+                    </button>
+                    <button type="button" onClick={() => handleAiAction('SUGGESTION_ARCHIVED')} className="border border-primary/15 px-3 py-2 text-[10px] uppercase tracking-[0.24em] text-white/45 transition hover:border-primary/35 hover:text-primary">
+                      Archive
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-4 border-t border-primary/10 pt-4">
+                  <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-white/30">
+                    <span>Context_Awareness</span>
+                    <span className="text-primary">84%</span>
+                  </div>
+                  <div className="h-1 bg-white/5">
+                    <div className="h-full w-[84%] bg-primary shadow-[0_0_10px_rgba(255,255,0,0.5)]" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-[10px] uppercase tracking-[0.18em] text-white/30">
+                    <div className="border border-primary/10 p-3">
+                      <div className="flex items-center gap-2 text-primary/70">
+                        <Lock size={12} />
+                        ZKP_Link
+                      </div>
+                      <div className="mt-2 text-white/45">Active</div>
+                    </div>
+                    <div className="border border-primary/10 p-3">
+                      <div className="flex items-center gap-2 text-primary/70">
+                        <Database size={12} />
+                        Sync_Node
+                      </div>
+                      <div className="mt-2 text-white/45">Nominal</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </div>
+          <footer className="border-t border-primary/10 bg-black/75 px-6 py-4">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.4fr)]">
+              <div className="border border-primary/10 bg-black/80 px-4 py-4">
+                <div className="mb-3 flex items-center justify-between text-[10px] uppercase tracking-[0.24em] text-primary/65">
+                  <span>Telemetry_Logs</span>
+                  <span className="text-white/25">Neural_Archive_Renderer</span>
+                </div>
+                <div className="space-y-2">
+                  {recentLogs.map((log) => (
+                    <div key={log.id} className="flex items-center gap-3 text-[10px] uppercase tracking-[0.16em]">
+                      <span className="text-primary/35">[{log.timestamp}]</span>
+                      <span className="text-primary/55">[{log.type}]</span>
+                      <span className="text-white/55">{log.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-3">
+                <div className="border border-primary/10 bg-black/80 px-4 py-4">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-primary/65">
+                    <Activity size={12} />
+                    Active_Line
+                  </div>
+                  <div className="mt-3 text-[24px] font-semibold tracking-[0.08em] text-primary">{String(cursor.line + 1).padStart(2, '0')}</div>
+                  <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-white/30">Chars: {cursor.char}</div>
+                </div>
+
+                <div className="border border-primary/10 bg-black/80 px-4 py-4">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-primary/65">
+                    <Cpu size={12} />
+                    Buffer_Stats
+                  </div>
+                  <div className="mt-3 text-[10px] uppercase tracking-[0.18em] text-white/35">{lineCount}_lines / {wordCount}_tokens</div>
+                  <div className="mt-2 h-1 bg-white/5">
+                    <div className="h-full w-[68%] bg-primary shadow-[0_0_10px_rgba(255,255,0,0.5)]" />
+                  </div>
+                </div>
+
+                <div className="border border-primary/10 bg-black/80 px-4 py-4">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-primary/65">
+                    <Zap size={12} />
+                    Data_Sync
+                  </div>
+                  <div className="mt-3 text-[22px] font-semibold tracking-[0.08em] text-primary">{formatRuntime(sessionStartRef.current)}</div>
+                  <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-white/30">Latency: {Math.round(heartbeatMs)}ms</div>
+                </div>
+              </div>
+
+              <div className="border border-primary/10 bg-primary/8 px-4 py-4">
+                <div className="text-[10px] uppercase tracking-[0.24em] text-primary/70">Uplink_Status</div>
+                <div className="mt-3 text-[18px] font-semibold tracking-[0.08em] text-primary">Nominal</div>
+                <div className="mt-4 space-y-2 text-[10px] uppercase tracking-[0.18em] text-white/35">
+                  <div className="flex items-center justify-between">
+                    <span>CPU_Core_Load</span>
+                    <span className="text-primary">{cpuUsage}%</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Memory_Pool</span>
+                    <span className="text-primary">{memUsage}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Integrity_Mode</span>
+                    <span className="text-primary">Secure</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-primary/10 pt-4 text-[10px] uppercase tracking-[0.24em] text-white/25">
+              <div className="flex items-center gap-4">
+                <span className="inline-flex items-center gap-2 text-primary/80">
+                  <Command size={12} />
+                  CWD+K Ready
+                </span>
+                <span>Node_Lock: Stable</span>
+              </div>
+              <div className="flex items-center gap-4">
+                <span>Runtime: {formatRuntime(sessionStartRef.current)}</span>
+                <span>Editor_Mode: {isEditing ? 'Live' : 'Idle'}</span>
+              </div>
+            </div>
+          </footer>
+        </main>
+      </div>
     </div>
   );
 }

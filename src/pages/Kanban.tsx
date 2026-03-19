@@ -1,261 +1,417 @@
-import React, { useState, useMemo } from 'react';
-import { useTaskStore } from '@/store/useTaskStore';
-import { ArkanAudio } from '@/lib/audio/ArkanAudio';
-import { cn } from '@/lib/utils';
-import { Zap, Plus, Search } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from "react";
+import { useTaskStore, Task } from "@/store/useTaskStore";
+import { ArkanAudio } from "@/lib/audio/ArkanAudio";
+import { cn } from "@/lib/utils";
+import {
+  CheckCircle2,
+  Edit3,
+  MoreVertical,
+  Plus,
+  Search,
+  Shield,
+  Signal,
+  Zap,
+} from "lucide-react";
+
+function formatClock(now: number) {
+  return new Date(now).toLocaleTimeString("en-US", { hour12: false });
+}
+
+function formatRuntime(startedAt: number, now: number) {
+  const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const hours = String(Math.floor(elapsed / 3600)).padStart(2, "0");
+  const minutes = String(Math.floor((elapsed % 3600) / 60)).padStart(2, "0");
+  const seconds = String(elapsed % 60).padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function priorityLabel(priority: string) {
+  switch (priority) {
+    case "critical":
+      return "HIGH_CRITICAL";
+    case "high":
+      return "HIGH_PRIORITY";
+    case "medium":
+      return "MID_PRIORITY";
+    case "low":
+      return "LOW_PRIORITY";
+    default:
+      return priority.toUpperCase();
+  }
+}
+
+function statusDisplay(status: string) {
+  if (status === "in-progress") return "IN_PROGRESS";
+  return status.toUpperCase();
+}
+
+function clampProgress(task: Task) {
+  if (task.status === "completed") return 100;
+  if (task.status === "todo") return 0;
+  return task.progress ?? 45;
+}
+
+type TaskCardProps = {
+  task: Task;
+  onDragStart: (event: React.DragEvent, taskId: string) => void;
+};
+
+function TaskCard({ task, onDragStart }: TaskCardProps) {
+  const accentClass =
+    task.status === "in-progress"
+      ? "border-primary shadow-[0_0_12px_rgba(255,255,0,0.12)]"
+      : task.status === "completed"
+        ? "border-primary/10 opacity-50 grayscale"
+        : "border-primary/25";
+
+  return (
+    <div
+      draggable
+      onDragStart={(event) => onDragStart(event, task.id)}
+      className={cn(
+        "group relative cursor-grab border bg-[#060602] p-4 transition-all active:cursor-grabbing hover:border-primary/50",
+        accentClass
+      )}
+      data-context-target={task.id}
+      data-context-type="TASK"
+      data-context-name={task.title}
+    >
+      <div className="absolute right-3 top-3 text-[8px] uppercase tracking-[0.16em] text-primary/28">#{task.id.slice(-4).toUpperCase()}</div>
+      <div className={cn("text-[12px] font-semibold uppercase tracking-[0.14em]", task.status === "completed" ? "text-primary/35 line-through" : "text-primary")}>
+        {task.title}
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-3 text-[9px] uppercase tracking-[0.16em] text-primary/45">
+        <span className="border border-primary/20 bg-primary/5 px-2 py-1 text-primary/75">{task.category ?? "GENERAL"}</span>
+        <span>LOC: {task.location ?? "SECTOR_00"}</span>
+      </div>
+
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <span className={cn(
+          "border px-2 py-1 text-[9px] uppercase tracking-[0.2em]",
+          task.status === "in-progress"
+            ? "border-primary/55 bg-primary/12 text-primary"
+            : task.status === "completed"
+              ? "border-primary/10 bg-primary/5 text-primary/28"
+              : "border-primary/25 bg-primary/5 text-primary/75"
+        )}>
+          {priorityLabel(task.priority)}
+        </span>
+
+        <div className="flex items-center gap-2 text-primary/25 transition-colors group-hover:text-primary/55">
+          <Edit3 size={13} />
+          {task.status === "completed" ? <CheckCircle2 size={13} /> : <MoreVertical size={13} />}
+        </div>
+      </div>
+
+      {task.status === "in-progress" ? (
+        <div className="mt-4 h-0.5 w-full bg-primary/10">
+          <div className="h-full bg-primary shadow-[0_0_6px_rgba(255,255,0,0.4)]" style={{ width: `${clampProgress(task)}%` }} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export default function KanbanPage() {
   const { tasks, updateTask, addTask } = useTaskStore();
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedDirectory, setSelectedDirectory] = useState<string>("ALL");
+  const [selectedTag, setSelectedTag] = useState<string>("ALL");
+  const [now, setNow] = useState(() => Date.now());
+  const [sessionStart] = useState(() => Date.now());
+  const [dropStatus, setDropStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  const directories = useMemo(() => {
+    const map = new Map<string, number>();
+    tasks.forEach((task) => {
+      const key = task.directory ?? "/UNASSIGNED";
+      map.set(key, (map.get(key) ?? 0) + 1);
+    });
+    return Array.from(map.entries());
+  }, [tasks]);
+
+  const availableTags = useMemo(() => {
+    const allTags = new Set<string>();
+    tasks.forEach((task) => task.tags?.forEach((tag) => allTags.add(tag)));
+    return Array.from(allTags);
+  }, [tasks]);
 
   const filteredTasks = useMemo(() => {
-    if (!searchQuery) return tasks;
-    return tasks.filter(t => 
-      t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.id.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [tasks, searchQuery]);
+    return tasks.filter((task) => {
+      const matchesSearch = !searchQuery.trim() || [task.title, task.id, task.description, task.category, task.location]
+        .filter(Boolean)
+        .some((value) => value!.toLowerCase().includes(searchQuery.toLowerCase()));
 
-  const todos = filteredTasks.filter(t => t.status === 'todo');
-  const inProgress = filteredTasks.filter(t => t.status === 'in-progress');
-  const completed = filteredTasks.filter(t => t.status === 'completed');
+      const matchesDirectory = selectedDirectory === "ALL" || (task.directory ?? "/UNASSIGNED") === selectedDirectory;
+      const matchesTag = selectedTag === "ALL" || task.tags?.includes(selectedTag);
 
-  const handleDragStart = (e: React.DragEvent, taskId: string) => {
-    e.dataTransfer.setData('text/plain', taskId);
+      return matchesSearch && matchesDirectory && matchesTag;
+    });
+  }, [searchQuery, selectedDirectory, selectedTag, tasks]);
+
+  const columns = useMemo(
+    () => [
+      { id: "todo", label: "TO_DO", tasks: filteredTasks.filter((task) => task.status === "todo") },
+      { id: "in-progress", label: "IN_PROGRESS", tasks: filteredTasks.filter((task) => task.status === "in-progress") },
+      { id: "completed", label: "COMPLETED", tasks: filteredTasks.filter((task) => task.status === "completed") },
+    ],
+    [filteredTasks]
+  );
+
+  const handleDragStart = (event: React.DragEvent, taskId: string) => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", taskId);
+    ArkanAudio.playFast("key_tick_mechanical");
   };
 
-  const handleDrop = (e: React.DragEvent, status: string) => {
-    e.preventDefault();
-    const taskId = e.dataTransfer.getData('text/plain');
-    if (taskId) {
-      updateTask(taskId, { status });
-      ArkanAudio.playFast('system_execute_clack');
+  const handleDrop = async (event: React.DragEvent, status: string) => {
+    event.preventDefault();
+    const taskId = event.dataTransfer.getData("text/plain");
+    setDropStatus(null);
+
+    if (!taskId) {
+      return;
     }
+
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task || task.status === status) {
+      return;
+    }
+
+    await updateTask(taskId, {
+      status,
+      progress: status === "completed" ? 100 : status === "todo" ? 0 : task.progress ?? 45,
+    });
+    ArkanAudio.playFast("system_execute_clack");
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
+  const handleNewTask = async () => {
+    const nextIndex = tasks.length + 1;
+    await addTask({
+      title: `TASK_ARCHIVE_${String(nextIndex).padStart(2, "0")}`,
+      description: "Queued from task archive interface.",
+      status: "todo",
+      priority: selectedTag === "#security" ? "critical" : selectedTag === "#infra" ? "high" : "medium",
+      progress: 0,
+      projectId: "global",
+      category: (selectedTag !== "ALL" ? selectedTag.replace("#", "") : "GENERAL").toUpperCase(),
+      location: "SECTOR_01",
+      directory: selectedDirectory === "ALL" ? "/ACTIVE_LOGS" : selectedDirectory,
+      tags: selectedTag === "ALL" ? ["#neural"] : [selectedTag],
+    });
+    ArkanAudio.playFast("system_engage");
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-black text-white font-display overflow-hidden relative">
-      <div className="fixed inset-0 crt-overlay z-50 pointer-events-none"></div>
-      
-      <div className="flex flex-1 overflow-hidden relative">
-        <aside className="w-64 border-r border-primary/20 bg-black flex flex-col p-4 gap-6 shrink-0 z-10">
-          <button 
-            onClick={() => {
-              addTask({
-                title: 'NEW_TASK_INITIALIZED',
-                projectId: 'global',
-                status: 'todo',
-                priority: 'medium',
-                progress: 0
-              });
-              ArkanAudio.playFast('system_engage');
-            }}
-            className="w-full py-3 bg-primary text-black font-black text-xs tracking-[0.2em] uppercase flex items-center justify-center gap-2 hover:bg-white transition-colors shadow-[0_0_15px_rgba(255,255,0,0.3)]"
-          >
-            <Plus size={14} strokeWidth={3} />
-            NEW_TASK
-          </button>
-          
-          <div className="relative flex items-center bg-[#0a0a05] border border-primary/10 px-3 py-1">
-            <Search className="text-primary/40 h-3 w-3 mr-2" />
-            <input 
-              className="bg-transparent border-none text-[10px] w-full focus:ring-0 text-primary placeholder:text-primary/20 uppercase tracking-widest outline-none" 
-              placeholder="QUERY_TASKS..." 
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
+    <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-black text-primary font-mono">
+      <div className="arkan-grid-overlay opacity-20" />
+      <div className="crt-overlay absolute inset-0 opacity-20" />
+
+      <div className="relative z-10 flex h-full min-h-0 w-full overflow-hidden border border-primary/10 bg-black/65">
+        <aside className="flex w-[320px] shrink-0 flex-col border-r border-primary/10 bg-[#050502]/90 px-6 py-6">
+          <div className="border-b border-primary/10 pb-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[20px] font-semibold italic tracking-tight text-primary">ARKAN<span className="text-white"> //</span> <span className="text-[12px] not-italic">TASK_ARCHIVE_V1.0</span></div>
+                <div className="mt-2 inline-flex items-center gap-2 border border-primary/20 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-primary/75">
+                  <span className="h-2 w-2 rounded-full bg-primary shadow-[0_0_8px_rgba(255,255,0,0.5)]" />
+                  SYSTEM_STABLE
+                </div>
+              </div>
+            </div>
           </div>
 
-          <nav className="space-y-4">
-            <div>
-              <div className="text-[10px] text-primary/40 uppercase tracking-[0.2em] mb-3 flex items-center gap-2">
-                <span className="w-1 h-3 bg-primary/40"></span>
+          <button
+            type="button"
+            onClick={() => void handleNewTask()}
+            className="mt-6 border border-primary/45 bg-primary px-4 py-4 text-[12px] font-semibold uppercase tracking-[0.24em] text-black transition hover:brightness-110"
+          >
+            + NEW_TASK
+          </button>
+
+          <div className="mt-8 space-y-8 overflow-y-auto custom-scrollbar">
+            <section>
+              <div className="mb-4 flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-primary/45">
+                <span className="h-3 w-px bg-primary/45" />
                 CORE_DIRECTORIES
               </div>
-              <ul className="space-y-1">
-                <li className="flex items-center justify-between group cursor-pointer py-1.5 px-2 hover:bg-primary/5 border-l border-transparent hover:border-primary">
-                  <span className="text-xs text-primary/80 group-hover:text-primary tracking-wide">/ALL_RESOURCES</span>
-                  <span className="text-[9px] text-primary/30">042</span>
-                </li>
-                <li className="flex items-center justify-between group cursor-pointer py-1.5 px-2 bg-primary/10 border-l border-primary">
-                  <span className="text-xs text-primary tracking-wide">/ACTIVE_LOGS</span>
-                  <span className="text-[9px] text-primary/60">012</span>
-                </li>
-                <li className="flex items-center justify-between group cursor-pointer py-1.5 px-2 hover:bg-primary/5 border-l border-transparent hover:border-primary">
-                  <span className="text-xs text-primary/80 group-hover:text-primary tracking-wide">/SECURE_VAULT</span>
-                  <span className="text-[9px] text-primary/30">008</span>
-                </li>
-                <li className="flex items-center justify-between group cursor-pointer py-1.5 px-2 hover:bg-primary/5 border-l border-transparent hover:border-primary">
-                  <span className="text-xs text-primary/80 group-hover:text-primary tracking-wide">/ARCHIVE_EXT</span>
-                  <span className="text-[9px] text-primary/30">154</span>
-                </li>
-              </ul>
-            </div>
-            <div>
-              <div className="text-[10px] text-primary/40 uppercase tracking-[0.2em] mb-3 flex items-center gap-2">
-                <span className="w-1 h-3 bg-primary/40"></span>
+              <div className="space-y-1">
+                <button
+                  type="button"
+                  onClick={() => setSelectedDirectory("ALL")}
+                  className={cn(
+                    "flex w-full items-center justify-between px-3 py-2 text-left text-[12px] uppercase tracking-[0.16em] transition",
+                    selectedDirectory === "ALL" ? "border-l border-primary bg-primary/10 text-primary" : "text-primary/70 hover:bg-primary/5 hover:text-primary"
+                  )}
+                >
+                  <span>/ALL_RESOURCES</span>
+                  <span className="text-[10px] text-primary/35">{String(tasks.length).padStart(3, "0")}</span>
+                </button>
+                {directories.map(([directory, count]) => (
+                  <button
+                    key={directory}
+                    type="button"
+                    onClick={() => setSelectedDirectory(directory)}
+                    className={cn(
+                      "flex w-full items-center justify-between px-3 py-2 text-left text-[12px] uppercase tracking-[0.16em] transition",
+                      selectedDirectory === directory ? "border-l border-primary bg-primary/10 text-primary" : "text-primary/70 hover:bg-primary/5 hover:text-primary"
+                    )}
+                  >
+                    <span>{directory}</span>
+                    <span className="text-[10px] text-primary/35">{String(count).padStart(3, "0")}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section>
+              <div className="mb-4 flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-primary/45">
+                <span className="h-3 w-px bg-primary/45" />
                 TAGS_METADATA
               </div>
-              <div className="flex flex-wrap gap-2 px-2">
-                <span className="text-[9px] px-2 py-0.5 border border-primary/20 text-primary/60 hover:border-primary/60 cursor-pointer uppercase tracking-tighter">#security</span>
-                <span className="text-[9px] px-2 py-0.5 border border-primary/20 text-primary/60 hover:border-primary/60 cursor-pointer uppercase tracking-tighter">#infra</span>
-                <span className="text-[9px] px-2 py-0.5 border border-primary/20 text-primary/60 hover:border-primary/60 cursor-pointer uppercase tracking-tighter">#uplink</span>
-                <span className="text-[9px] px-2 py-0.5 border border-primary/20 text-primary/60 hover:border-primary/60 cursor-pointer uppercase tracking-tighter">#neural</span>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedTag("ALL")}
+                  className={cn(
+                    "border px-3 py-1 text-[10px] uppercase tracking-[0.18em] transition",
+                    selectedTag === "ALL" ? "border-primary bg-primary/10 text-primary" : "border-primary/15 text-primary/55 hover:border-primary/40 hover:text-primary"
+                  )}
+                >
+                  #all
+                </button>
+                {availableTags.map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => setSelectedTag(tag)}
+                    className={cn(
+                      "border px-3 py-1 text-[10px] uppercase tracking-[0.18em] transition",
+                      selectedTag === tag ? "border-primary bg-primary/10 text-primary" : "border-primary/15 text-primary/55 hover:border-primary/40 hover:text-primary"
+                    )}
+                  >
+                    {tag}
+                  </button>
+                ))}
               </div>
+            </section>
+          </div>
+
+          <div className="mt-auto border-t border-primary/10 pt-6">
+            <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-primary/55">
+              <span>SYS_STORAGE</span>
+              <span>72.4%</span>
             </div>
-          </nav>
-          <div className="mt-auto pt-6 border-t border-primary/10">
-            <div className="flex justify-between items-end mb-2">
-              <div className="text-[10px] text-primary/60 font-bold uppercase tracking-widest">SYS_STORAGE</div>
-              <div className="text-[10px] text-primary/40 font-mono">72.4%</div>
+            <div className="h-1.5 border border-primary/10 bg-primary/5">
+              <div className="h-full w-[72.4%] bg-primary shadow-[0_0_8px_rgba(255,255,0,0.45)]" />
             </div>
-            <div className="h-1.5 w-full bg-primary/5 rounded-full overflow-hidden border border-primary/10">
-              <div className="h-full bg-primary w-[72.4%] shadow-[0_0_8px_rgba(255,255,0,0.5)]"></div>
-            </div>
-            <div className="mt-3 flex justify-between items-center text-[8px] text-primary/30 font-mono">
+            <div className="mt-3 flex items-center justify-between text-[9px] uppercase tracking-[0.16em] text-primary/30">
               <span>SECTOR_01 // OK</span>
               <span>992.4 GB</span>
             </div>
           </div>
         </aside>
 
-        <main className="flex-1 flex flex-col p-6 overflow-hidden kanban-grid" style={{ backgroundImage: 'linear-gradient(rgba(255, 255, 0, 0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 0, 0.02) 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
-          <div className="grid grid-cols-3 gap-6 h-full">
-            {/* TO_DO */}
-            <div 
-              className="flex flex-col h-full"
-              onDrop={(e) => handleDrop(e, 'todo')}
-              onDragOver={handleDragOver}
-            >
-              <div className="flex items-center justify-between mb-4 border-b border-primary/20 pb-2">
-                <h2 className="text-sm font-black text-primary tracking-[0.3em] uppercase flex items-center gap-3">
-                  <span className="w-2 h-2 bg-primary/20 rotate-45"></span>
-                  TO_DO
-                </h2>
-                <span className="text-[10px] text-primary/40 font-mono bg-primary/5 px-2 py-0.5 border border-primary/10">CNT_{todos.length.toString().padStart(2, '0')}</span>
-              </div>
-              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pr-2">
-                {todos.map(task => (
-                  <div 
-                    key={task.id}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, task.id)}
-                    className="bg-[#0a0a05] border border-primary/40 p-4 hover:border-primary transition-all group relative cursor-grab active:cursor-grabbing"
-                    data-context-target={task.id}
-                    data-context-type="TASK"
-                    data-context-name={task.title}
-                  >
-                    <div className="absolute top-0 right-0 p-1 text-[8px] text-primary/30 font-mono italic">#{task.id.substring(0,6).toUpperCase()}</div>
-                    <h3 className="font-bold text-sm text-primary group-hover:neon-text transition-all tracking-wide mb-3 uppercase">{task.title}</h3>
-                    <div className="flex items-center gap-3 mb-4">
-                      <span className="text-[9px] border border-primary/40 text-primary/80 px-2 py-0.5 rounded-sm uppercase bg-primary/5">{task.priority}</span>
-                      <span className="text-[8px] text-primary/40 uppercase font-mono tracking-tighter">LOC: SECTOR_07</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-[9px] text-primary/80 font-bold bg-primary/10 px-2 py-1 uppercase border border-primary/20 tracking-widest">{task.priority}_PRIORITY</span>
-                      <div className="flex gap-2">
-                        <span className="material-icons text-primary/20 text-xs hover:text-primary cursor-pointer">edit</span>
-                        <span className="material-icons text-primary/20 text-xs hover:text-primary cursor-pointer">more_vert</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex flex-wrap items-center gap-4 border-b border-primary/10 px-6 py-5 xl:justify-between">
+            <label className="flex h-14 min-w-[340px] flex-1 items-center gap-3 border border-primary/15 bg-[#050502]/90 px-4 text-primary/35 focus-within:border-primary/40 focus-within:text-primary/65 xl:max-w-[720px]">
+              <Search size={16} />
+              <input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="QUERY_ARCHIVE_DATA..."
+                className="w-full bg-transparent text-[11px] uppercase tracking-[0.2em] text-white/70 outline-none placeholder:text-white/16"
+              />
+              <span className="text-[10px] uppercase tracking-[0.18em] text-primary/30">F3_SEARCH</span>
+            </label>
 
-            {/* IN_PROGRESS */}
-            <div 
-              className="flex flex-col h-full"
-              onDrop={(e) => handleDrop(e, 'in-progress')}
-              onDragOver={handleDragOver}
-            >
-              <div className="flex items-center justify-between mb-4 border-b border-primary/60 pb-2">
-                <h2 className="text-sm font-black text-primary tracking-[0.3em] uppercase flex items-center gap-3">
-                  <span className="w-2 h-2 bg-primary rotate-45 animate-pulse shadow-[0_0_5px_yellow]"></span>
-                  IN_PROGRESS
-                </h2>
-                <span className="text-[10px] text-primary font-mono bg-primary/10 px-2 py-0.5 border border-primary/40">CNT_{inProgress.length.toString().padStart(2, '0')}</span>
+            <div className="ml-auto flex items-center gap-8 text-right text-[10px] uppercase tracking-[0.22em] text-primary/75">
+              <div>
+                <div className="text-white/24">UTC_CLOCK</div>
+                <div className="mt-1 text-xl font-semibold text-primary">{formatClock(now)}</div>
               </div>
-              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pr-2">
-                {inProgress.map(task => (
-                  <div 
-                    key={task.id}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, task.id)}
-                    className="bg-[#0a0a05] border border-primary p-4 shadow-[0_0_5px_rgba(255,255,0,0.15)] group relative cursor-grab active:cursor-grabbing"
-                    data-context-target={task.id}
-                    data-context-type="TASK"
-                    data-context-name={task.title}
-                  >
-                    <div className="absolute top-0 right-0 p-1 text-[8px] text-primary font-mono italic">#{task.id.substring(0,6).toUpperCase()}</div>
-                    <h3 className="font-bold text-sm text-primary tracking-wide mb-3 uppercase">{task.title}</h3>
-                    <div className="flex items-center gap-3 mb-4">
-                      <span className="text-[9px] border border-primary text-primary px-2 py-0.5 rounded-sm uppercase bg-primary/10">{task.priority}</span>
-                      <span className="text-[8px] text-primary/60 uppercase font-mono tracking-tighter">LOC: LAB_09</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-[9px] text-primary font-black bg-primary/20 px-2 py-1 uppercase border border-primary/50 tracking-widest">{task.priority}_PRIORITY</span>
-                      <div className="flex gap-2">
-                        <span className="material-icons text-primary/60 text-xs">sync</span>
-                      </div>
-                    </div>
-                    <div className="mt-4 h-0.5 w-full bg-primary/10">
-                      <div className="h-full bg-primary w-[45%]"></div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* COMPLETED */}
-            <div 
-              className="flex flex-col h-full"
-              onDrop={(e) => handleDrop(e, 'completed')}
-              onDragOver={handleDragOver}
-            >
-              <div className="flex items-center justify-between mb-4 border-b border-primary/20 pb-2">
-                <h2 className="text-sm font-black text-primary/40 tracking-[0.3em] uppercase flex items-center gap-3">
-                  <span className="w-2 h-2 bg-primary/10 rotate-45"></span>
-                  COMPLETED
-                </h2>
-                <span className="text-[10px] text-primary/20 font-mono bg-primary/5 px-2 py-0.5 border border-primary/10">CNT_{completed.length.toString().padStart(2, '0')}</span>
-              </div>
-              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pr-2 opacity-60 grayscale hover:grayscale-0 transition-all">
-                {completed.map(task => (
-                  <div 
-                    key={task.id}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, task.id)}
-                    className="bg-[#0a0a05] border border-primary/10 p-4 group relative cursor-grab active:cursor-grabbing"
-                    data-context-target={task.id}
-                    data-context-type="TASK"
-                    data-context-name={task.title}
-                  >
-                    <div className="absolute top-0 right-0 p-1 text-[8px] text-primary/20 font-mono italic">#{task.id.substring(0,6).toUpperCase()}</div>
-                    <h3 className="font-bold text-sm text-primary/40 line-through tracking-wide mb-3 uppercase">{task.title}</h3>
-                    <div className="flex items-center gap-3 mb-4">
-                      <span className="text-[9px] border border-primary/10 text-primary/20 px-2 py-0.5 rounded-sm uppercase">{task.priority}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-[9px] text-primary/20 font-bold bg-primary/5 px-2 py-1 uppercase border border-primary/5 tracking-widest">P02_MID</span>
-                      <span className="material-icons text-primary/40 text-sm">verified</span>
-                    </div>
-                  </div>
-                ))}
+              <div>
+                <div className="text-white/24">UPTIME</div>
+                <div className="mt-1 text-xl font-semibold text-primary">{formatRuntime(sessionStart, now)}</div>
               </div>
             </div>
           </div>
+
+          <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden px-6 py-5 custom-scrollbar">
+            <div className="grid min-w-[980px] grid-cols-3 gap-6 h-full">
+              {columns.map((column) => {
+                const isDropActive = dropStatus === column.id;
+                return (
+                  <section
+                    key={column.id}
+                    className="flex h-full min-h-0 flex-col"
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      if (dropStatus !== column.id) setDropStatus(column.id);
+                    }}
+                    onDragLeave={() => setDropStatus((current) => (current === column.id ? null : current))}
+                    onDrop={(event) => void handleDrop(event, column.id)}
+                  >
+                    <div className={cn(
+                      "mb-5 flex items-center justify-between border-b pb-3",
+                      column.id === "in-progress" ? "border-primary/55" : "border-primary/18"
+                    )}>
+                      <div className={cn(
+                        "flex items-center gap-3 text-sm font-semibold uppercase tracking-[0.28em]",
+                        column.id === "completed" ? "text-primary/35" : "text-primary"
+                      )}>
+                        <span className={cn(
+                          "h-2 w-2 rotate-45",
+                          column.id === "in-progress" ? "bg-primary shadow-[0_0_8px_rgba(255,255,0,0.4)]" : column.id === "completed" ? "bg-primary/12" : "bg-primary/30"
+                        )} />
+                        {column.label}
+                      </div>
+                      <span className={cn(
+                        "border px-3 py-1 text-[10px] uppercase tracking-[0.18em]",
+                        column.id === "in-progress" ? "border-primary/40 bg-primary/10 text-primary" : column.id === "completed" ? "border-primary/10 bg-primary/5 text-primary/22" : "border-primary/12 bg-primary/5 text-primary/45"
+                      )}>
+                        CNT_{String(column.tasks.length).padStart(2, "0")}
+                      </span>
+                    </div>
+
+                    <div className={cn(
+                      "flex-1 space-y-4 overflow-y-auto pr-2 custom-scrollbar transition-colors",
+                      column.id === "completed" && "opacity-60 hover:opacity-100",
+                      isDropActive && "rounded-sm bg-primary/5"
+                    )}>
+                      {column.tasks.map((task) => (
+                        <TaskCard key={task.id} task={task} onDragStart={handleDragStart} />
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          </div>
+
+          <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-primary/10 px-6 py-4 text-[10px] uppercase tracking-[0.22em] text-primary/55">
+            <div className="flex items-center gap-3 text-primary/85">
+              <Shield size={12} />
+              READY_FOR_INPUT
+            </div>
+            <div className="flex flex-wrap items-center gap-4 text-white/28">
+              <span>[LOG] FETCHING_TASK_METADATA... SUCCESS</span>
+              <span>[SYS] NODE_WASH_4329: ACTIVE</span>
+            </div>
+            <div className="flex items-center gap-4 text-primary/75">
+              <span>SYNC_STATUS: ENCRYPTED_UPLINK</span>
+              <span className="inline-flex items-center gap-2"><Signal size={12} /> IP: 192.168.0.254</span>
+              <span className="inline-flex items-center gap-2"><Zap size={12} /> 2077 ARKAN SYSTEMS</span>
+            </div>
+          </footer>
         </main>
       </div>
-      
-      <div className="fixed top-20 left-4 text-[10px] text-primary/10 font-mono pointer-events-none uppercase">Grid_Ref: X-104.992</div>
-      <div className="fixed top-4 left-72 text-[10px] text-primary/10 font-mono pointer-events-none uppercase">Grid_Ref: Y--02.441</div>
-      <div className="fixed bottom-14 left-4 text-[10px] text-primary/10 font-mono pointer-events-none uppercase">Grid_Ref: Z-11.002</div>
     </div>
   );
 }
