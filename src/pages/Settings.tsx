@@ -23,7 +23,7 @@ import {
 import { THEME_SWATCHES, type AccentTheme, useThemeStore } from "@/store/useTheme";
 import { useSystemLogStore } from "@/store/useSystemLogStore";
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
-import { getAuthUser, isAuthBypassed, subscribeToAuthUser } from "@/lib/auth";
+import { getAuthUser, subscribeToAuthUser } from "@/lib/auth";
 
 const THEME_LABELS: Record<AccentTheme, string> = {
   yellow: "YELLOW",
@@ -192,7 +192,7 @@ export default function SettingsPage() {
   }, [sessionEmail]);
 
   useEffect(() => {
-    if (!hasSupabaseConfig && !isAuthBypassed) {
+    if (!hasSupabaseConfig) {
       setSessionEmail("");
       return;
     }
@@ -345,12 +345,6 @@ export default function SettingsPage() {
   };
 
   const handleSendPasswordReset = async () => {
-    if (isAuthBypassed) {
-      setResetError("AUTH_BYPASS_ACTIVE // PASSWORD_RESET_DISABLED");
-      setResetStatus("");
-      return;
-    }
-
     if (!hasSupabaseConfig) {
       setResetError("SUPABASE_CONFIG_MISSING");
       setResetStatus("");
@@ -390,12 +384,6 @@ export default function SettingsPage() {
   };
 
   const handleUpdatePassword = async () => {
-    if (isAuthBypassed) {
-      setResetError("AUTH_BYPASS_ACTIVE // PASSWORD_ROTATION_DISABLED");
-      setResetStatus("");
-      return;
-    }
-
     if (!hasSupabaseConfig) {
       setResetError("SUPABASE_CONFIG_MISSING");
       setResetStatus("");
@@ -606,7 +594,7 @@ export default function SettingsPage() {
               <InfoRow label="THEME" value={THEME_LABELS[theme]} />
               <InfoRow label="ACCOUNT_EMAIL" value={sessionEmail || "UNBOUND"} />
               <InfoRow label="SESSION_NODE" value={sessionNode} />
-              <InfoRow label="AUTH_BACKEND" value={isAuthBypassed ? "LOCAL_TEST_BYPASS" : hasSupabaseConfig ? "SUPABASE_LINKED" : "CONFIG_MISSING"} />
+              <InfoRow label="AUTH_BACKEND" value={hasSupabaseConfig ? "SUPABASE_LINKED" : "CONFIG_MISSING"} />
               <InfoRow label="CONFIG_SECURE" value={syncActive ? "TRUE" : "DEGRADED"} />
             </div>
 
@@ -618,7 +606,7 @@ export default function SettingsPage() {
                 <div className="min-w-0 flex-1">
                   <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">ACCESS_SECURITY</div>
                   <p className="mt-1 text-[9px] uppercase tracking-[0.16em] text-primary/35">
-                    {isAuthBypassed ? "Local test mode active. Recovery controls stay disabled." : "Email recovery route for access-code rotation."}
+                    Email recovery route for access-code rotation.
                   </p>
                 </div>
               </div>
@@ -641,10 +629,10 @@ export default function SettingsPage() {
               <button
                 type="button"
                 onClick={handleSendPasswordReset}
-                disabled={isSendingReset || isAuthBypassed || !hasSupabaseConfig || !sessionEmail}
+                disabled={isSendingReset || !hasSupabaseConfig || !sessionEmail}
                 className={cn(
                   "mt-4 flex w-full items-center justify-center gap-2 border px-4 py-3 text-[11px] font-black uppercase tracking-[0.2em] transition-all",
-                  isSendingReset || isAuthBypassed || !hasSupabaseConfig || !sessionEmail
+                  isSendingReset || !hasSupabaseConfig || !sessionEmail
                     ? "cursor-not-allowed border-white/10 bg-black/20 text-white/30"
                     : "border-primary/20 bg-primary/10 text-primary hover:bg-primary hover:text-black"
                 )}
@@ -697,10 +685,10 @@ export default function SettingsPage() {
                   <button
                     type="button"
                     onClick={handleUpdatePassword}
-                    disabled={isUpdatingPassword || isAuthBypassed || !hasSupabaseConfig}
+                    disabled={isUpdatingPassword || !hasSupabaseConfig}
                     className={cn(
                       "flex w-full items-center justify-center gap-2 border px-4 py-3 text-[11px] font-black uppercase tracking-[0.2em] transition-all",
-                      isUpdatingPassword || isAuthBypassed || !hasSupabaseConfig
+                      isUpdatingPassword || !hasSupabaseConfig
                         ? "cursor-not-allowed border-white/10 bg-black/20 text-white/30"
                         : "border-primary/20 bg-primary/10 text-primary hover:bg-primary hover:text-black"
                     )}

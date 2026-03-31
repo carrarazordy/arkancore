@@ -6,7 +6,6 @@ import { useSystemLogStore } from "@/store/useSystemLogStore";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
 import { TechnicalGridBackground } from "@/components/ui/TechnicalGridBackground";
-import { isAuthBypassed } from "@/lib/auth";
 
 interface ArchivedNode {
   id: string;
@@ -16,25 +15,6 @@ interface ArchivedNode {
   status: string;
   original_collection: string;
 }
-
-const LOCAL_ARCHIVED_NODES: ArchivedNode[] = [
-  {
-    id: "local-archive-1",
-    title: "OPS RETROSPECTIVE",
-    type: "TASK",
-    de_manifested_timestamp: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
-    status: "ARCHIVED",
-    original_collection: "tasks",
-  },
-  {
-    id: "local-archive-2",
-    title: "ORBITAL STATION AUDIT",
-    type: "PROJECT",
-    de_manifested_timestamp: new Date(Date.now() - 1000 * 60 * 60 * 8).toISOString(),
-    status: "ARCHIVED",
-    original_collection: "projects",
-  },
-];
 
 function resolveArchiveTimestamp(record: any) {
   return record.archived_at || record.updated_at || record.updatedAt || new Date().toISOString();
@@ -50,12 +30,6 @@ export default function ArchivePage() {
     addLog(">> SCANNING_HISTORICAL_CHANNELS...", "system");
 
     try {
-      if (isAuthBypassed) {
-        setNodes(LOCAL_ARCHIVED_NODES);
-        addLog(`>> LOCAL_TEST_SCAN_COMPLETE: ${LOCAL_ARCHIVED_NODES.length}_NODES_IDENTIFIED`, "system");
-        return;
-      }
-
       const [tasksRes, projectsRes] = await Promise.all([
         supabase.from("tasks").select("*").eq("is_archived", true),
         supabase.from("projects").select("*").eq("is_archived", true),
@@ -100,12 +74,6 @@ export default function ArchivePage() {
   const restoreNode = async (id: string, collection: string) => {
     addLog(`>> INITIATING_RE-MANIFESTATION: NODE_${id.slice(0, 8)}`, "system");
     ArkanAudio.play("restore_ascending_ping");
-
-    if (isAuthBypassed) {
-      addLog(`LOCAL_TEST_RESTORE: NODE_${id.slice(0, 8)} RETURNED_TO_ACTIVE_VIEW`, "status");
-      setNodes((prev) => prev.filter((node) => node.id !== id));
-      return;
-    }
 
     const restoreStatus = collection === "projects" ? "active" : "todo";
 
@@ -212,9 +180,7 @@ export default function ArchivePage() {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <Sync className="h-3 w-3 animate-spin-slow text-primary/40" />
-            <span className="text-[9px] font-bold uppercase tracking-widest text-primary/40">
-              {isAuthBypassed ? "LOCAL_TEST_MODE" : "AUTO_SYNC_ACTIVE"}
-            </span>
+            <span className="text-[9px] font-bold uppercase tracking-widest text-primary/40">AUTO_SYNC_ACTIVE</span>
           </div>
         </div>
       </footer>

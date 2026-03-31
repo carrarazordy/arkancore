@@ -13,7 +13,6 @@ Tactical operating workspace built with React, Vite and Supabase.
 1. Install dependencies:
    `npm install`
 2. Set the required environment variables in [`.env.local`](/F:/Arkana%20Lab/App/arkancore/.env.local)
-   For a local UI test without auth, add `VITE_BYPASS_AUTH="true"` and optionally customize `VITE_BYPASS_AUTH_EMAIL`.
 3. Run the app:
    `npm run dev`
 

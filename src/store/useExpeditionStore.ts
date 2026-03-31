@@ -9,50 +9,10 @@ import {
   type HydratedExpeditionSector,
   type ManifestItemRow,
 } from "@/lib/expeditions";
-import { getAuthUser, isAuthBypassed } from "@/lib/auth";
+import { getAuthUser } from "@/lib/auth";
 
 export type ExpeditionItem = ManifestItemRow;
 export type ExpeditionSector = HydratedExpeditionSector;
-
-const LOCAL_EXPEDITION_SECTORS: ExpeditionSector[] = hydrateExpeditionManifest(
-  [
-    { id: "local-sector-alpha", label: "ALPHA_NODE", order_index: 0 },
-    { id: "local-sector-beta", label: "BETA_NODE", order_index: 1 },
-  ],
-  [
-    {
-      id: "local-item-1",
-      sector_id: "local-sector-alpha",
-      label: "SATCOM_ARRAY",
-      is_manifested: false,
-      technical_id: "SATCOM_ARRAY-001",
-      priority: "high",
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "local-item-2",
-      sector_id: "local-sector-alpha",
-      label: "MEDICAL_KIT",
-      is_manifested: true,
-      technical_id: "MEDICAL_KIT-002",
-      priority: "medium",
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "local-item-3",
-      sector_id: "local-sector-beta",
-      label: "POWER_CELLS",
-      is_manifested: false,
-      technical_id: "POWER_CELLS-003",
-      priority: "critical",
-      created_at: new Date().toISOString(),
-    },
-  ]
-);
-
-function createTechnicalId(label: string) {
-  return `${label.replace(/[^A-Z0-9]+/g, "_")}-${Date.now().toString().slice(-6)}`;
-}
 
 interface ExpeditionState {
   sectors: ExpeditionSector[];
@@ -74,16 +34,6 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
     set({ isLoading: true });
 
     try {
-      if (isAuthBypassed) {
-        const readiness = computeExpeditionReadiness(LOCAL_EXPEDITION_SECTORS);
-        set({
-          sectors: LOCAL_EXPEDITION_SECTORS,
-          archivedCount: readiness.manifested,
-          isLoading: false,
-        });
-        return;
-      }
-
       const user = await getAuthUser();
       if (!user) {
         set({ sectors: [], archivedCount: 0, isLoading: false });
@@ -129,25 +79,6 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
       return;
     }
 
-    if (isAuthBypassed) {
-      set((state) => ({
-        sectors: [
-          ...state.sectors,
-          {
-            id: `local-sector-${Date.now()}`,
-            label: normalizedLabel,
-            order_index: state.sectors.length,
-            items: [],
-            manifestedCount: 0,
-            totalCount: 0,
-          },
-        ],
-      }));
-      useSystemLogStore.getState().addLog(`LOCAL_TEST_SECTOR_INITIALIZED:${normalizedLabel}`, "status");
-      ArkanAudio.play("system_execute_clack");
-      return;
-    }
-
     const user = await getAuthUser();
     if (!user) {
       return;
@@ -189,33 +120,6 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
   addComponent: async (sectorId: string, label: string, priority: ExpeditionPriority = "medium") => {
     const normalizedLabel = label.trim().toUpperCase();
     if (!normalizedLabel) {
-      return;
-    }
-
-    if (isAuthBypassed) {
-      const item: ExpeditionItem = {
-        id: `local-item-${Date.now()}`,
-        sector_id: sectorId,
-        label: normalizedLabel,
-        is_manifested: false,
-        technical_id: createTechnicalId(normalizedLabel),
-        priority,
-        created_at: new Date().toISOString(),
-      };
-
-      set((state) => ({
-        sectors: state.sectors.map((sector) =>
-          sector.id === sectorId
-            ? {
-                ...sector,
-                items: [...sector.items, item],
-                totalCount: sector.totalCount + 1,
-              }
-            : sector
-        ),
-      }));
-      useSystemLogStore.getState().addLog(`LOCAL_TEST_COMPONENT_BUFFERED:${normalizedLabel}`, "status");
-      ArkanAudio.play("key_tick_mechanical");
       return;
     }
 
@@ -269,23 +173,6 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
 
     useSystemLogStore.getState().addLog(`INITIATING_DEMANIFESTATION:${item.technical_id}`, "status");
     ArkanAudio.play("ui_confirm_ping");
-
-    if (isAuthBypassed) {
-      set((current) => ({
-        archivedCount: current.archivedCount + 1,
-        sectors: current.sectors.map((candidate) =>
-          candidate.id === sector.id
-            ? {
-                ...candidate,
-                items: candidate.items.filter((entry) => entry.id !== itemId),
-                manifestedCount: candidate.manifestedCount + 1,
-              }
-            : candidate
-        ),
-      }));
-      useSystemLogStore.getState().addLog(`LOCAL_TEST_ARCHIVE_SUCCESS // ${item.technical_id}`, "system");
-      return;
-    }
 
     const { error } = await supabase
       .from("expedition_items")

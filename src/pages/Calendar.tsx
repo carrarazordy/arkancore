@@ -30,7 +30,6 @@ import {
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { isAuthBypassed } from "@/lib/auth";
 import {
   buildTaskPromotionDraft,
   buildTemporalPayload,
@@ -50,38 +49,6 @@ const PRIORITY_STYLES: Record<TemporalEvent["priority"], string> = {
   MEDIUM: "border-[#8e950f] bg-[#141705] text-[#effd63]",
   HIGH: "border-[#f7ff55] bg-[#1b1b04] text-[#fffdb2] shadow-[0_0_18px_rgba(247,255,85,0.16)]",
 };
-
-function toIsoAtTime(day: Date, hours: number, minutes: number) {
-  const next = new Date(day);
-  next.setHours(hours, minutes, 0, 0);
-  return next.toISOString();
-}
-
-function createLocalTestEvents(weekStart: Date): TemporalEvent[] {
-  const briefingDay = addDays(weekStart, 1);
-  const reviewDay = addDays(weekStart, 3);
-
-  return sortEvents([
-    {
-      id: `local-event-${format(weekStart, "yyyyMMdd")}-1`,
-      title: "LOCAL_TEST_BRIEFING",
-      start_timestamp: toIsoAtTime(briefingDay, 9, 0),
-      end_timestamp: toIsoAtTime(briefingDay, 10, 30),
-      priority: "HIGH",
-      description: "AUTH BYPASS MODE ENABLED FOR UI VALIDATION.",
-      tags: ["LOCAL", "TEST", "BRIEFING"],
-    },
-    {
-      id: `local-event-${format(weekStart, "yyyyMMdd")}-2`,
-      title: "DESIGN_REVIEW",
-      start_timestamp: toIsoAtTime(reviewDay, 14, 0),
-      end_timestamp: toIsoAtTime(reviewDay, 15, 0),
-      priority: "MEDIUM",
-      description: "Mock event injected locally while auth is bypassed.",
-      tags: ["LOCAL", "UX"],
-    },
-  ]);
-}
 
 function normalizeEventRow(row: any): TemporalEvent {
   return {
@@ -397,7 +364,7 @@ function CreateEventModal({ isOpen, draft, isSubmitting, onClose, onChange, onSu
 
                 <div className="grid gap-3 text-[11px] uppercase tracking-[0.24em] text-[#788023] sm:grid-cols-2 lg:grid-cols-1">
                   <div className="border border-[#2f330f] bg-[#0b0d04] px-4 py-3">
-                    <p>LOGIC_PROVIDER: {isAuthBypassed ? "LOCAL_TEST_EVENTS" : "SUPABASE_EVENTS"}</p>
+                    <p>LOGIC_PROVIDER: SUPABASE_EVENTS</p>
                   </div>
                   <div className="border border-[#2f330f] bg-[#0b0d04] px-4 py-3">
                     <p>WORKER: BACKGROUND_SYNC_ACTIVE</p>
@@ -411,7 +378,7 @@ function CreateEventModal({ isOpen, draft, isSubmitting, onClose, onChange, onSu
 
             <div className="flex flex-col gap-4 px-8 py-6 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-[10px] uppercase tracking-[0.34em] text-[#6f7522]">
-                LOGIC_PROVIDER: {isAuthBypassed ? "LOCAL_TEST_EVENTS // UPLINK_BUFFER: SIMULATED" : "APPNITE_EVENTS // UPLINK_BUFFER: SECURE"}
+                LOGIC_PROVIDER: APPNITE_EVENTS // UPLINK_BUFFER: SECURE
               </p>
               <div className="flex flex-col gap-3 sm:flex-row">
                 <button
@@ -502,12 +469,6 @@ export default function CalendarPage() {
   const fetchEvents = useCallback(async () => {
     setIsSyncing(true);
 
-    if (isAuthBypassed) {
-      setEvents(createLocalTestEvents(weekStart));
-      setIsSyncing(false);
-      return;
-    }
-
     const { data, error } = await supabase
       .from("events")
       .select("id,title,start_timestamp,end_timestamp,priority,tags,description")
@@ -535,13 +496,6 @@ export default function CalendarPage() {
   }, [fetchEvents]);
 
   useEffect(() => {
-    if (isAuthBypassed) {
-      setIsRealtimeLive(true);
-      return () => {
-        setIsRealtimeLive(false);
-      };
-    }
-
     const channel = supabase
       .channel(`temporal-week-${format(weekStart, "yyyyMMdd")}`)
       .on(
@@ -614,22 +568,6 @@ export default function CalendarPage() {
       setEvents((current) => sortEvents([...current, optimisticEvent]));
       setIsCreateOpen(false);
       ArkanAudio.playFast("system_execute_clack");
-
-      if (isAuthBypassed) {
-        setEvents((current) =>
-          sortEvents([
-            ...current.filter((item) => item.id !== optimisticEvent.id),
-            {
-              ...optimisticEvent,
-              id: `local-event-${Date.now()}`,
-            },
-          ])
-        );
-        setDraft(createDraft(selectedDate));
-        setIsSubmitting(false);
-        addLog(`LOCAL_TEST_SEQUENCE_COMMITTED:${payload.title}`, "status");
-        return;
-      }
 
       const { data, error } = await supabase
         .from("events")
