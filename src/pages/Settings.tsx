@@ -23,6 +23,7 @@ import {
 import { THEME_SWATCHES, type AccentTheme, useThemeStore } from "@/store/useTheme";
 import { useSystemLogStore } from "@/store/useSystemLogStore";
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
+import { getAuthUser, subscribeToAuthUser } from "@/lib/auth";
 
 const THEME_LABELS: Record<AccentTheme, string> = {
   yellow: "YELLOW",
@@ -197,14 +198,18 @@ export default function SettingsPage() {
     }
 
     const syncAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setSessionEmail(session?.user.email ?? "");
+      try {
+        const user = await getAuthUser();
+        setSessionEmail(user?.email ?? "");
+      } catch {
+        setSessionEmail("");
+      }
     };
 
     void syncAuth();
 
-    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
-      setSessionEmail(session?.user.email ?? "");
+    const unsubscribe = subscribeToAuthUser((user, event) => {
+      setSessionEmail(user?.email ?? "");
 
       if (event === "PASSWORD_RECOVERY") {
         setIsRecoveryMode(true);
@@ -214,7 +219,7 @@ export default function SettingsPage() {
     });
 
     return () => {
-      listener.subscription.unsubscribe();
+      unsubscribe();
     };
   }, []);
 

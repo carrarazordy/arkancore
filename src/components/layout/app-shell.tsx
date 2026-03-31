@@ -9,7 +9,7 @@ import TacticalContextMenu from "./TacticalContextMenu";
 import { cn } from "@/lib/utils";
 import { THEME_SWATCHES, useThemeStore } from "@/store/useTheme";
 import { motion, AnimatePresence } from "framer-motion";
-import { supabase } from "@/lib/supabase";
+import { getAuthUser, subscribeToAuthUser, type AppAuthUser } from "@/lib/auth";
 import { SplashSequence } from "./SplashSequence";
 import { ModuleInitModal } from "../ui/ModuleInitModal";
 import { OnboardingFlow } from "../onboarding/OnboardingFlow";
@@ -25,11 +25,6 @@ import { hasCompletedOnboarding } from "@/lib/onboarding";
 
 const CONTENT_ROUTES = ["/dashboard", "/operations", "/kanban", "/notes", "/timers", "/search", "/archive", "/expeditions", "/shopping", "/calendar", "/settings"];
 const INBOX_HIDDEN_ROUTES = ["/dashboard", "/operations", "/kanban", "/tasks", "/timers", "/search", "/expeditions", "/shopping", "/calendar", "/settings"];
-
-interface ShellUser {
-    id: string;
-    email?: string | null;
-}
 
 function hexToRgb(hex: string) {
     const normalized = hex.replace('#', '');
@@ -51,7 +46,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const [inboxCollapsed, setInboxCollapsed] = useState(false);
     const [showSplash, setShowSplash] = useState(false);
     const [showOnboarding, setShowOnboarding] = useState(false);
-    const [currentUser, setCurrentUser] = useState<ShellUser | null>(null);
+    const [currentUser, setCurrentUser] = useState<AppAuthUser | null>(null);
     const { pathname } = useLocation();
     const navigate = useNavigate();
     const theme = useThemeStore((state) => state.theme);
@@ -61,18 +56,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }, []);
 
     useEffect(() => {
-        const syncUser = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            setCurrentUser(session?.user ? { id: session.user.id, email: session.user.email } : null);
-        };
-        syncUser();
+        let isMounted = true;
 
-        const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-            setCurrentUser(session?.user ? { id: session.user.id, email: session.user.email } : null);
+        const syncUser = async () => {
+            try {
+                const user = await getAuthUser();
+                if (!isMounted) return;
+                setCurrentUser(user);
+            } catch (error) {
+                if (!isMounted) return;
+                console.error("App shell user sync failed:", error);
+                setCurrentUser(null);
+            }
+        };
+        void syncUser();
+
+        const unsubscribe = subscribeToAuthUser((user) => {
+            if (!isMounted) return;
+            setCurrentUser(user);
         });
 
         return () => {
-            authListener.subscription.unsubscribe();
+            isMounted = false;
+            unsubscribe();
         };
     }, []);
 

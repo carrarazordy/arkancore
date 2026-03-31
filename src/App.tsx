@@ -1,9 +1,10 @@
-import React from "react";
+﻿import React from "react";
 import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate, useLocation } from "react-router-dom";
 import { ArrowRight, AtSign, LockKeyhole, Shield, UserPlus } from "lucide-react";
 import { AppShell } from "./components/layout/app-shell";
 import { AuthGuard } from "./components/auth/AuthGuard";
 import { AudioInitializer } from "./components/layout/AudioInitializer";
+import { SplashSequence } from "./components/layout/SplashSequence";
 import { TechnicalProtocolDialog } from "./components/ui/technical-protocol-dialog";
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 
@@ -252,7 +253,7 @@ function AuthScreen({ mode }: { mode: "login" | "signup" }) {
               <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full border border-primary bg-primary/5 shadow-[0_0_25px_rgba(255,255,0,0.12)]">
                 <Shield className="h-7 w-7 text-primary" />
               </div>
-              <h1 className="text-2xl font-black uppercase tracking-[0.12em] text-white sm:text-[30px]">
+              <h1 className="font-sans text-[30px] font-black uppercase leading-[0.92] tracking-[0.14em] text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.08)] sm:text-[36px]">
                 {isSignup ? "ACCOUNT_INITIALIZATION" : "SYSTEM_AUTHENTICATION"}
               </h1>
               <p className="mt-2 text-[10px] uppercase tracking-[0.24em] text-white/35">
@@ -392,11 +393,29 @@ function AuthScreen({ mode }: { mode: "login" | "signup" }) {
 
 const Login = () => <AuthScreen mode="login" />;
 const Signup = () => <AuthScreen mode="signup" />;
+const SPLASH_STORAGE_KEY = "arkan:splash:seen";
 
 export default function App() {
+  const [showSplash, setShowSplash] = React.useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    return window.sessionStorage.getItem(SPLASH_STORAGE_KEY) !== "true";
+  });
+
+  const handleSplashComplete = React.useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(SPLASH_STORAGE_KEY, "true");
+    }
+
+    setShowSplash(false);
+  }, []);
+
   return (
     <BrowserRouter>
       <AudioInitializer />
+      {showSplash ? <SplashSequence onComplete={handleSplashComplete} /> : null}
       <AuthGuard>
         <Routes>
           <Route
@@ -432,6 +451,4 @@ export default function App() {
     </BrowserRouter>
   );
 }
-
-
 

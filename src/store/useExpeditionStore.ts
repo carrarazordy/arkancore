@@ -9,6 +9,7 @@ import {
   type HydratedExpeditionSector,
   type ManifestItemRow,
 } from "@/lib/expeditions";
+import { getAuthUser } from "@/lib/auth";
 
 export type ExpeditionItem = ManifestItemRow;
 export type ExpeditionSector = HydratedExpeditionSector;
@@ -33,8 +34,8 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
     set({ isLoading: true });
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session?.user) {
+      const user = await getAuthUser();
+      if (!user) {
         set({ sectors: [], archivedCount: 0, isLoading: false });
         return;
       }
@@ -78,8 +79,7 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
       return;
     }
 
-    const { data: sessionData } = await supabase.auth.getSession();
-    const user = sessionData.session?.user;
+    const user = await getAuthUser();
     if (!user) {
       return;
     }
@@ -123,8 +123,7 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
       return;
     }
 
-    const { data: sessionData } = await supabase.auth.getSession();
-    const user = sessionData.session?.user;
+    const user = await getAuthUser();
     if (!user) {
       return;
     }
