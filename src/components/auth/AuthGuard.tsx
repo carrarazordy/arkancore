@@ -1,13 +1,12 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import type { User } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabase";
+import { getAuthUser, subscribeToAuthUser, type AppAuthUser } from "@/lib/auth";
 
 const PUBLIC_ROUTES = new Set(["/", "/login", "/signup"]);
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
     const [loading, setLoading] = useState(true);
-    const [user, setUser] = useState<User | null>(null);
+    const [user, setUser] = useState<AppAuthUser | null>(null);
     const navigate = useNavigate();
     const { pathname } = useLocation();
 
@@ -17,30 +16,32 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         let isMounted = true;
 
         const syncAuth = async () => {
-            const { data, error } = await supabase.auth.getSession();
-            if (!isMounted) return;
-
-            if (error) {
-                console.error("AuthGuard session lookup failed:", error.message);
+            try {
+                const nextUser = await getAuthUser();
+                if (!isMounted) return;
+                setUser(nextUser);
+            } catch (error) {
+                if (!isMounted) return;
+                console.error("AuthGuard session lookup failed:", error instanceof Error ? error.message : error);
+                setUser(null);
+            } finally {
+                if (isMounted) {
+                    setLoading(false);
+                }
             }
-
-            setUser(data.session?.user ?? null);
-            setLoading(false);
         };
 
         void syncAuth();
 
-        const {
-            data: { subscription },
-        } = supabase.auth.onAuthStateChange((_event, session) => {
+        const unsubscribe = subscribeToAuthUser((nextUser) => {
             if (!isMounted) return;
-            setUser(session?.user ?? null);
+            setUser(nextUser);
             setLoading(false);
         });
 
         return () => {
             isMounted = false;
-            subscription.unsubscribe();
+            unsubscribe();
         };
     }, []);
 
