@@ -352,7 +352,7 @@ export default function DashboardPage() {
                     handleLaunchOmniSearch();
                   }
                 }}
-                placeholder="CROWK_TO_SEARCH"
+                placeholder="QUERY_TO_SEARCH"
                 className="w-full border border-primary/15 bg-black/50 py-2 pl-9 pr-3 text-[10px] uppercase tracking-[0.18em] text-primary/75 outline-none transition-colors placeholder:text-primary/18 hover:border-primary/30 focus:border-primary/40"
               />
             </div>

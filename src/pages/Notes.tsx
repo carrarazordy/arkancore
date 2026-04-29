@@ -37,11 +37,7 @@ const LINE_HEIGHT = 24;
 const FONT_SIZE = 14;
 const PADDING_V = 60;
 const PADDING_H = 72;
-const CHAR_WIDTH = 8.4;
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
+const GENERIC_NOTE_TITLES = new Set(['NEW_ENTRY', 'UNTITLED_NOTE']);
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -143,6 +139,151 @@ function renderCodeTokens(line: string) {
     );
   });
 }
+
+function formatNoteTitleCandidate(value: string) {
+  return value
+    .replace(/[`*_#>\[\]-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 48);
+}
+
+function deriveNoteTitle(content: string, currentTitle: string) {
+  const normalizedContent = content.replace(/\r\n?/g, '\n');
+  const lines = normalizedContent.split('\n');
+  const headingLine = lines.find((line) => /^#\s+/.test(line.trim()));
+
+  if (headingLine) {
+    const nextTitle = formatNoteTitleCandidate(headingLine.trim().replace(/^#\s+/, ''));
+    return nextTitle || currentTitle;
+  }
+
+  if (!GENERIC_NOTE_TITLES.has(currentTitle)) {
+    return currentTitle;
+  }
+
+  const fallbackLine = lines.find((line) => {
+    const trimmed = line.trim();
+    return trimmed && !trimmed.startsWith('```') && !trimmed.startsWith('- ') && !trimmed.startsWith('>') && !trimmed.startsWith('#');
+  });
+
+  if (!fallbackLine) {
+    return currentTitle;
+  }
+
+  return formatNoteTitleCandidate(fallbackLine) || currentTitle;
+}
+
+function refineNoteContent(content: string) {
+  const normalizedContent = content.replace(/\r\n?/g, '\n');
+  if (!normalizedContent.trim()) {
+    return '';
+  }
+
+  const lines = normalizedContent.split('\n');
+  const refined: string[] = [];
+  let inCodeFence = false;
+  let previousBlank = false;
+
+  for (const rawLine of lines) {
+    const trimmedRight = rawLine.replace(/[ \t]+$/g, '');
+
+    if (trimmedRight.startsWith('```')) {
+      if (!inCodeFence && previousBlank && refined.length === 0) {
+        previousBlank = false;
+      }
+      refined.push(trimmedRight);
+      inCodeFence = !inCodeFence;
+      previousBlank = false;
+      continue;
+    }
+
+    if (inCodeFence) {
+      refined.push(trimmedRight);
+      previousBlank = false;
+      continue;
+    }
+
+    if (!trimmedRight.trim()) {
+      if (!previousBlank && refined.length > 0) {
+        refined.push('');
+      }
+      previousBlank = true;
+      continue;
+    }
+
+    let nextLine = trimmedRight;
+    const checklistMatch = nextLine.match(/^(?:[-*•–—]\s+)?\[( |x|X)\]\s+(.*)$/);
+
+    if (checklistMatch) {
+      nextLine = `- [${checklistMatch[1].toLowerCase() === 'x' ? 'x' : ' '}] ${checklistMatch[2].trim()}`;
+    } else if (/^[-*•–—]\s+/.test(nextLine)) {
+      nextLine = `- ${nextLine.replace(/^[-*•–—]\s+/, '').trim()}`;
+    }
+
+    refined.push(nextLine);
+    previousBlank = false;
+  }
+
+  while (refined[0] === '') {
+    refined.shift();
+  }
+
+  while (refined[refined.length - 1] === '') {
+    refined.pop();
+  }
+
+  return refined.join('\n');
+}
+
+function renderEditorLine(line: string, query: string) {
+  if (!line) {
+    return <span className="text-white/10"> </span>;
+  }
+
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) {
+    return line;
+  }
+
+  const parts = line.split(new RegExp(`(${escapeRegExp(normalizedQuery)})`, 'gi'));
+
+  return parts.map((part, index) => {
+    if (!part) {
+      return null;
+    }
+
+    const isMatch = part.localeCompare(normalizedQuery, undefined, { sensitivity: 'accent' }) === 0;
+    return (
+      <span
+        key={`${part}-${index}`}
+        className={isMatch ? 'bg-primary/20 text-primary shadow-[0_0_10px_rgba(255,255,0,0.18)]' : undefined}
+      >
+        {part}
+      </span>
+    );
+  });
+}
+
+type EditorMirrorProps = {
+  text: string;
+  activeLine: number;
+  searchQuery: string;
+};
+
+const EditorMirror = ({ text, activeLine, searchQuery }: EditorMirrorProps) => {
+  const lines = text ? text.split('\n') : [''];
+
+  return (
+    <div className="space-y-0 font-mono text-[14px]">
+      {lines.map((line, index) => (
+        <div key={`editor-line-${index}`} className="md-line whitespace-pre text-[14px] text-white/76" data-active={index === activeLine}>
+          {renderEditorLine(line, searchQuery)}
+        </div>
+      ))}
+    </div>
+  );
+};
 type FileSystemNodeProps = {
   node: ArchiveNode;
   nodes: ArchiveNode[];
@@ -514,13 +655,20 @@ export default function NotesPage() {
 
     return () => window.clearInterval(intervalId);
   }, [tick, updateMetrics]);
+
   const handleEditorChange = useCallback(
     (event: React.ChangeEvent<HTMLTextAreaElement>) => {
       if (!selectedNode) {
         return;
       }
 
-      updateNode(selectedNode.id, { content: event.target.value });
+      const nextContent = event.target.value;
+      const nextTitle = deriveNoteTitle(nextContent, selectedNode.title);
+
+      updateNode(selectedNode.id, {
+        content: nextContent,
+        ...(nextTitle !== selectedNode.title ? { title: nextTitle } : {}),
+      });
       updateCursor();
     },
     [selectedNode, updateNode, updateCursor]
@@ -548,7 +696,11 @@ export default function NotesPage() {
         ArkanAudio.playFast('key_tick_mechanical');
         const nextValue = value.slice(0, selectionStart) + '  ' + value.slice(selectionEnd);
         if (selectedNode) {
-          updateNode(selectedNode.id, { content: nextValue });
+          const nextTitle = deriveNoteTitle(nextValue, selectedNode.title);
+          updateNode(selectedNode.id, {
+            content: nextValue,
+            ...(nextTitle !== selectedNode.title ? { title: nextTitle } : {}),
+          });
           window.setTimeout(() => {
             textarea.selectionStart = textarea.selectionEnd = selectionStart + 2;
             updateCursor();
@@ -568,32 +720,26 @@ export default function NotesPage() {
     [selectedNode, updateCursor, updateNode]
   );
 
-  const handleEditorMouseDown = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      if (!selectedNode || !editorRef.current) {
-        return;
-      }
+  const handleEditorSurfaceMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (isEditing || !editorRef.current) {
+      return;
+    }
 
-      event.preventDefault();
-      const container = event.currentTarget;
-      const rect = container.getBoundingClientRect();
-      const lines = selectedContent.split('\n');
-      const relativeY = event.clientY - rect.top + container.scrollTop - PADDING_V;
-      const relativeX = event.clientX - rect.left + container.scrollLeft - PADDING_H;
-      const line = clamp(Math.floor(relativeY / LINE_HEIGHT), 0, Math.max(lines.length - 1, 0));
-      const char = clamp(Math.round(relativeX / CHAR_WIDTH), 0, (lines[line] ?? '').length);
-      const index = getTextIndexFromPosition(lines, line, char);
+    const target = event.target as HTMLElement;
+    if (target.closest('button')) {
+      return;
+    }
 
-      editorRef.current.focus();
-      editorRef.current.selectionStart = editorRef.current.selectionEnd = index;
+    event.preventDefault();
+    requestAnimationFrame(() => {
+      editorRef.current?.focus();
       updateCursor();
-    },
-    [selectedContent, selectedNode, updateCursor]
-  );
+    });
+  }, [isEditing, updateCursor]);
 
   const handleCreateEntry = useCallback(() => {
     const technicalId = `NT-${Math.floor(Math.random() * 900) + 100}`;
-    const title = 'NEW_ENTRY';
+    const title = 'UNTITLED_NOTE';
     const parentId = selectedContainerId ?? null;
 
     addNode({
@@ -601,17 +747,44 @@ export default function NotesPage() {
       title,
       type: 'note',
       parentId,
-      content:
-        '# NEW_ENTRY\n\nInitialize archive payload and continue the protocol.\n\n```shell.commands\narkan --init --note-id "NEW_ENTRY"\nlink archive --priority "high"\n```\n\n### ACTION_ITEMS\n\n- [ ] Draft initial sequence\n- [ ] Bind note to current operation',
+      content: '',
     });
 
-    addLog('ARCHIVE_ENTRY_INITIALIZED', 'status');
+    addLog('ARCHIVE_ENTRY_READY_FOR_INPUT', 'status');
     ArkanAudio.playFast('system_engage');
     window.setTimeout(() => {
       editorRef.current?.focus();
       updateCursor();
     }, 0);
   }, [addLog, addNode, selectedContainerId, updateCursor]);
+
+  const handleRefineNote = useCallback(() => {
+    if (!selectedNode) {
+      return;
+    }
+
+    const nextContent = refineNoteContent(selectedContent);
+    const nextTitle = deriveNoteTitle(nextContent, selectedNode.title);
+    const hasChanges = nextContent !== selectedContent || nextTitle !== selectedNode.title;
+
+    if (!hasChanges) {
+      addLog('NOTE_BUFFER_ALREADY_PRECISE', 'status');
+      ArkanAudio.playFast('key_tick_mechanical');
+      return;
+    }
+
+    updateNode(selectedNode.id, {
+      content: nextContent,
+      ...(nextTitle !== selectedNode.title ? { title: nextTitle } : {}),
+    });
+    addLog('NOTE_BUFFER_REFINED', 'sync');
+    ArkanAudio.playFast('system_engage');
+
+    window.setTimeout(() => {
+      editorRef.current?.focus();
+      updateCursor();
+    }, 0);
+  }, [addLog, selectedContent, selectedNode, updateCursor, updateNode]);
 
   const handleToggleChecklist = useCallback(
     (lineIndex: number) => {
@@ -797,9 +970,19 @@ export default function NotesPage() {
             <section className="flex min-w-0 flex-1 flex-col overflow-hidden border-r border-primary/10">
               <div className="flex flex-wrap items-center justify-between gap-4 border-b border-primary/10 bg-black/65 px-6 py-3">
                 <div className="flex min-w-0 items-center gap-4">
-                  <div className="border border-primary/35 px-3 py-1 text-[10px] uppercase tracking-[0.26em] text-primary shadow-[0_0_10px_rgba(255,255,0,0.18)]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isEditing) {
+                        editorRef.current?.blur();
+                      } else {
+                        editorRef.current?.focus();
+                      }
+                    }}
+                    className="border border-primary/35 px-3 py-1 text-[10px] uppercase tracking-[0.26em] text-primary shadow-[0_0_10px_rgba(255,255,0,0.18)] transition hover:bg-primary/10"
+                  >
                     {isEditing ? 'Live_Markdown_v2' : 'Read_Sync'}
-                  </div>
+                  </button>
                   <div className="min-w-0 truncate text-[11px] uppercase tracking-[0.24em] text-white/45">
                     {selectedNode?.title ?? 'Neural_Sync_Protocol.md'}
                   </div>
@@ -815,40 +998,41 @@ export default function NotesPage() {
                 </div>
               </div>
 
-              <div className="relative flex-1 overflow-auto bg-black/55 custom-scrollbar" onMouseDown={handleEditorMouseDown}>
+              <div className="relative flex-1 overflow-auto bg-black/55 custom-scrollbar" onMouseDown={handleEditorSurfaceMouseDown}>
                 {selectedNode ? (
                   <div className="relative min-h-full" style={{ padding: `${PADDING_V}px ${PADDING_H}px` }}>
-                    <div
-                      className="absolute z-30 w-[8px] bg-primary shadow-[0_0_14px_rgba(255,255,0,0.85)] animate-[block-pulse_1s_steps(1)_infinite]"
-                      style={{
-                        height: `${LINE_HEIGHT - 6}px`,
-                        top: `${PADDING_V + cursor.line * LINE_HEIGHT + 3}px`,
-                        left: `${PADDING_H + cursor.char * CHAR_WIDTH}px`,
-                        pointerEvents: 'none',
-                      }}
-                    />
-
-                    <div className="relative z-20 pointer-events-none">
-                      <TerminalRenderer text={selectedContent} activeLine={cursor.line} onToggleChecklist={handleToggleChecklist} onCopyCode={handleCopyCode} />
-                    </div>
+                    {isEditing ? (
+                      <div className="relative z-20 pointer-events-none">
+                        <EditorMirror text={selectedContent} activeLine={cursor.line} searchQuery={editorQuery} />
+                      </div>
+                    ) : (
+                      <div className="relative z-20">
+                        <TerminalRenderer text={selectedContent} activeLine={cursor.line} onToggleChecklist={handleToggleChecklist} onCopyCode={handleCopyCode} />
+                      </div>
+                    )}
 
                     <textarea
                       ref={editorRef}
                       value={selectedContent}
                       onChange={handleEditorChange}
                       onKeyDown={handleKeyDown}
+                      onKeyUp={updateCursor}
                       onSelect={updateCursor}
                       onFocus={() => setIsEditing(true)}
                       onBlur={() => setIsEditing(false)}
                       spellCheck={false}
                       wrap="off"
-                      className="selection-yellow absolute inset-0 z-10 h-full w-full resize-none bg-transparent font-mono text-transparent caret-transparent outline-none"
+                      className={cn(
+                        'selection-yellow absolute inset-0 h-full w-full resize-none bg-transparent font-mono text-transparent outline-none',
+                        isEditing ? 'z-30' : 'pointer-events-none z-0'
+                      )}
                       style={{
                         padding: `${PADDING_V}px ${PADDING_H}px`,
                         fontSize: `${FONT_SIZE}px`,
                         lineHeight: `${LINE_HEIGHT}px`,
                         letterSpacing: '0px',
                         fontFamily: '"JetBrains Mono", monospace',
+                        caretColor: isEditing ? '#f9f906' : 'transparent',
                       }}
                     />
                   </div>
@@ -880,9 +1064,9 @@ export default function NotesPage() {
                   <span className="text-[11px] uppercase tracking-[0.22em] text-white/70">Extract_Subroutines</span>
                 </button>
 
-                <button type="button" onClick={() => handleAiAction('DOSSIER_SYNTHESIS_BUFFERED')} className="flex w-full items-center gap-3 border border-primary/15 bg-white/5 px-4 py-4 text-left transition hover:border-primary/35 hover:bg-primary/5">
+                <button type="button" onClick={handleRefineNote} className="flex w-full items-center gap-3 border border-primary/15 bg-white/5 px-4 py-4 text-left transition hover:border-primary/35 hover:bg-primary/5">
                   <FileText size={18} className="text-primary/70" />
-                  <span className="text-[11px] uppercase tracking-[0.22em] text-white/70">Synthesize_Dossier</span>
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-white/70">Refine_Note</span>
                 </button>
 
                 <button type="button" onClick={() => handleAiAction('PATTERN_RECOGNITION_DISPATCHED')} className="flex w-full items-center gap-3 border border-primary/15 bg-white/5 px-4 py-4 text-left transition hover:border-primary/35 hover:bg-primary/5">
@@ -896,10 +1080,10 @@ export default function NotesPage() {
                     Synergy_Suggestion
                   </div>
                   <p className="mt-3 text-[11px] leading-5 text-white/55">
-                    Neural patterns detect focus on markdown logic. Apply hierarchical scaling to headings for clarity.
+                    Refinement now preserves your text and only normalizes spacing, bullet markers, and checklists for a cleaner buffer.
                   </p>
                   <div className="mt-4 flex gap-2">
-                    <button type="button" onClick={() => handleAiAction('SUGGESTION_ACCEPTED_AND_BUFFERED')} className="bg-primary px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-black transition hover:brightness-110">
+                    <button type="button" onClick={handleRefineNote} className="bg-primary px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-black transition hover:brightness-110">
                       Accept
                     </button>
                     <button type="button" onClick={() => handleAiAction('SUGGESTION_ARCHIVED')} className="border border-primary/15 px-3 py-2 text-[10px] uppercase tracking-[0.24em] text-white/45 transition hover:border-primary/35 hover:text-primary">

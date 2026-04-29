@@ -7,8 +7,8 @@ export function AudioInitializer() {
     const { pathname } = useLocation();
 
     const handleInteraction = useCallback(() => {
-        // Initialize AudioContext on first user interaction
-        ArkanAudio.playFast('silent_start'); // Dummy sound to wake up engine
+        void ArkanAudio.unlock();
+        ArkanAudio.playFast('silent_start');
         window.removeEventListener('click', handleInteraction);
         window.removeEventListener('keydown', handleInteraction);
     }, []);
@@ -26,35 +26,53 @@ export function AudioInitializer() {
     }, []);
 
     useEffect(() => {
-        // Add listeners for interaction
         window.addEventListener('click', handleInteraction);
         window.addEventListener('keydown', handleInteraction);
 
-        // Global hover sounds for interactive elements
-        // We use event delegation on active elements
+        let lastHoverTarget: Element | null = null;
+
         const handleMouseOver = (e: MouseEvent) => {
             const target = e.target as HTMLElement;
-            if (target.closest('button, a, [role="button"], input, textarea, .interactive')) {
-                // Debounce slightly or just play
+            const interactive = target.closest('button, a, [role="button"], input, textarea, select, .interactive');
+            if (interactive && interactive !== lastHoverTarget) {
+                lastHoverTarget = interactive;
                 ArkanAudio.playHover();
             }
         };
 
         const handleClick = (e: MouseEvent) => {
             const target = e.target as HTMLElement;
-            if (target.closest('button, a, [role="button"], .interactive')) {
+            if (target.closest('button, a, [role="button"], input[type="checkbox"], input[type="radio"], select, .interactive')) {
                 ArkanAudio.playClick();
             }
         };
 
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+            if (e.key === 'Escape' || e.key === 'Backspace') {
+                ArkanAudio.playBack();
+                return;
+            }
+
+            if (e.key === 'Enter') {
+                ArkanAudio.playEnter();
+                return;
+            }
+
+            ArkanAudio.typing(e);
+        };
+
         document.addEventListener('mouseover', handleMouseOver);
         document.addEventListener('click', handleClick);
+        document.addEventListener('keydown', handleKeyDown);
 
         return () => {
             window.removeEventListener('click', handleInteraction);
             window.removeEventListener('keydown', handleInteraction);
             document.removeEventListener('mouseover', handleMouseOver);
             document.removeEventListener('click', handleClick);
+            document.removeEventListener('keydown', handleKeyDown);
         };
     }, [handleInteraction]);
 

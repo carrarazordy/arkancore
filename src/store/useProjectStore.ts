@@ -12,7 +12,47 @@ export interface Project {
 interface ProjectState {
   projects: Project[];
   deleteProject: (id: string) => Promise<void>;
-  addProject: (project: Omit<Project, 'id' | 'technicalId'>) => void;
+  addProject: (project: Omit<Project, "id" | "technicalId"> & { technicalId?: string }) => Project;
+  updateProject: (id: string, updates: Partial<Omit<Project, "id">>) => Promise<void>;
+}
+
+function normalizeProjectTechnicalId(value: string) {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+}
+
+function getNextProjectTechnicalId(projects: Project[]) {
+  const nextNumber =
+    projects.reduce((maxValue, project) => {
+      const match = project.technicalId.match(/^PRJ-(\d+)$/i);
+      return Math.max(maxValue, match ? Number(match[1]) : 0);
+    }, 0) + 1;
+
+  return `PRJ-${String(nextNumber).padStart(3, "0")}`;
+}
+
+function ensureUniqueProjectTechnicalId(
+  projects: Project[],
+  desiredTechnicalId: string | undefined,
+  currentProjectId?: string
+) {
+  const fallbackTechnicalId = getNextProjectTechnicalId(projects);
+  const baseTechnicalId = normalizeProjectTechnicalId(desiredTechnicalId || fallbackTechnicalId) || fallbackTechnicalId;
+
+  if (!projects.some((project) => project.technicalId === baseTechnicalId && project.id !== currentProjectId)) {
+    return baseTechnicalId;
+  }
+
+  let suffix = 2;
+  let candidate = `${baseTechnicalId}_${suffix}`;
+  while (projects.some((project) => project.technicalId === candidate && project.id !== currentProjectId)) {
+    suffix += 1;
+    candidate = `${baseTechnicalId}_${suffix}`;
+  }
+
+  return candidate;
 }
 
 export const useProjectStore = create<ProjectState>((set) => ({
@@ -24,12 +64,35 @@ export const useProjectStore = create<ProjectState>((set) => ({
     set((state) => ({ projects: state.projects.filter(p => p.id !== id) }));
   },
   addProject: (project) => {
-    set((state) => ({
-      projects: [...state.projects, {
+    let createdProject: Project | null = null;
+
+    set((state) => {
+      createdProject = {
         ...project,
-        id: Math.random().toString(36).substr(2, 9),
-        technicalId: `PRJ-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`
-      }]
+        id: crypto.randomUUID(),
+        technicalId: ensureUniqueProjectTechnicalId(state.projects, project.technicalId),
+      };
+
+      return {
+        projects: [...state.projects, createdProject],
+      };
+    });
+
+    return createdProject as Project;
+  },
+  updateProject: async (id, updates) => {
+    set((state) => ({
+      projects: state.projects.map((project) =>
+        project.id === id
+          ? {
+              ...project,
+              ...updates,
+              technicalId: updates.technicalId
+                ? ensureUniqueProjectTechnicalId(state.projects, updates.technicalId, id)
+                : project.technicalId,
+            }
+          : project
+      ),
     }));
-  }
+  },
 }));

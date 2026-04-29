@@ -110,34 +110,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         const cleanup = ArkanCommands.init(navigate);
 
-        const handleGlobalInteraction = (e: MouseEvent) => {
-            const target = e.target as HTMLElement;
-            if (target.closest('.arkan-button') || target.closest('button') || target.closest('a') || target.closest('input')) {
-                ArkanAudio.playClick();
-            }
-        };
-
-        const handleHover = (e: MouseEvent) => {
-            const target = e.target as HTMLElement;
-            if (target.closest('.arkan-button') || target.closest('button') || target.closest('a')) {
-                ArkanAudio.playHover();
-            }
-        };
-
-        const handleGlobalTyping = (e: KeyboardEvent) => {
-            if (e.metaKey || e.ctrlKey) return;
-            ArkanAudio.typing(e);
-        };
-
-        window.addEventListener('click', handleGlobalInteraction);
-        window.addEventListener('mouseover', handleHover);
-        window.addEventListener('keydown', handleGlobalTyping);
-
         return () => {
             if (cleanup) cleanup();
-            window.removeEventListener('click', handleGlobalInteraction);
-            window.removeEventListener('mouseover', handleHover);
-            window.removeEventListener('keydown', handleGlobalTyping);
         };
     }, [navigate]);
 

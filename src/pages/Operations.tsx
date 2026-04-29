@@ -9,6 +9,7 @@ import {
   Database,
   LayoutGrid,
   List,
+  Pencil,
   Plus,
   Search,
   Signal,
@@ -38,6 +39,18 @@ function formatRuntime(startedAt: number, now: number = Date.now()) {
 
 function formatClock(now: number) {
   return new Date(now).toLocaleTimeString("en-US", { hour12: false });
+}
+
+function parseOperationBuffer(buffer: string) {
+  const normalized = buffer
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return {
+    title: normalized[0] ?? "",
+    description: normalized.slice(1).join(" "),
+  };
 }
 
 function useOperationsEngine() {
@@ -125,16 +138,16 @@ type OperationsProjectNodeProps = {
   taskCount: number;
   activeCount: number;
   onOpen: (id: string) => void;
+  onEdit: (event: React.MouseEvent, project: Project) => void;
   onDelete: (event: React.MouseEvent, id: string, name: string) => void;
 };
 
-function OperationsProjectNode({ project, taskCount, activeCount, onOpen, onDelete }: OperationsProjectNodeProps) {
+function OperationsProjectNode({ project, taskCount, activeCount, onOpen, onEdit, onDelete }: OperationsProjectNodeProps) {
   return (
-    <button
-      type="button"
+    <div
       onClick={() => onOpen(project.id)}
       onMouseEnter={() => ArkanAudio.play("ui_hover_shimmer")}
-      className="group relative flex min-h-[220px] flex-col overflow-hidden border border-primary/15 bg-[#050502] p-5 text-left transition-all hover:border-primary/45 hover:bg-primary/5"
+      className="group relative flex min-h-[220px] cursor-pointer flex-col overflow-hidden border border-primary/15 bg-[#050502] p-5 text-left transition-all hover:border-primary/45 hover:bg-primary/5"
     >
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
       <div className="flex items-start justify-between gap-4">
@@ -144,13 +157,22 @@ function OperationsProjectNode({ project, taskCount, activeCount, onOpen, onDele
           <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-primary/45">{project.status ?? 'ROUTINE'}</div>
           {project.description ? <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-white/22">{project.description}</div> : null}
         </div>
-        <button
-          type="button"
-          onClick={(event) => onDelete(event, project.id, project.name)}
-          className="rounded-sm border border-primary/15 p-2 text-primary/45 transition hover:border-primary/40 hover:text-primary"
-        >
-          <Trash2 size={14} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={(event) => onEdit(event, project)}
+            className="rounded-sm border border-primary/15 p-2 text-primary/45 transition hover:border-primary/40 hover:text-primary"
+          >
+            <Pencil size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={(event) => onDelete(event, project.id, project.name)}
+            className="rounded-sm border border-primary/15 p-2 text-primary/45 transition hover:border-primary/40 hover:text-primary"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
       </div>
 
       <div className="mt-5 flex items-center justify-between text-[10px] uppercase tracking-[0.18em] text-white/28">
@@ -172,8 +194,17 @@ function OperationsProjectNode({ project, taskCount, activeCount, onOpen, onDele
         </div>
       </div>
 
-      <div className="mt-auto pt-6 text-[10px] uppercase tracking-[0.22em] text-primary/55">Open_Module_Stream</div>
-    </button>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpen(project.id);
+        }}
+        className="mt-auto pt-6 text-left text-[10px] uppercase tracking-[0.22em] text-primary/55 transition hover:text-primary"
+      >
+        Open_Module_Stream
+      </button>
+    </div>
   );
 }
 export default function OperationsPage() {
@@ -206,6 +237,7 @@ export default function OperationsPage() {
     return window.localStorage.getItem("arkan-operations-quick-buffer") ?? "";
   });
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
+  const [projectEditorTarget, setProjectEditorTarget] = useState<Project | null>(null);
   const [sessionId] = useState(() => `${Date.now()}-${Math.floor(Math.random() * 9000) + 1000}`);
   const [sessionLogs, setSessionLogs] = useState<string[]>([
     "SYSTEM_HEARTBEAT_ACKNOWLEDGED",
@@ -227,6 +259,14 @@ export default function OperationsPage() {
 
   const handleInitProject = () => {
     ArkanAudio.playFast("system_engage");
+    setProjectEditorTarget(null);
+    setIsNewProjectModalOpen(true);
+  };
+
+  const handleEditProject = (event: React.MouseEvent, project: Project) => {
+    event.stopPropagation();
+    ArkanAudio.playFast("system_engage");
+    setProjectEditorTarget(project);
     setIsNewProjectModalOpen(true);
   };
 
@@ -282,17 +322,59 @@ export default function OperationsPage() {
       return;
     }
 
-    const title = quickBuffer.trim() || `OP_${selectedProject.technicalId}_${projectTasks.length + 1}`;
-    await addTask({
-      title,
-      description: quickBuffer.trim() || `Buffered for ${selectedProject.name}`,
-      status: "todo",
-      priority: "medium",
-      projectId: selectedProjectId,
-    });
-    addLog(`TASK_BUFFER_COMMITTED_TO_${selectedProject.technicalId}`);
+    const bufferedOperation = parseOperationBuffer(quickBuffer);
+    const createOperation = async (title: string, description?: string) => {
+      await addTask({
+        title,
+        description,
+        status: "todo",
+        priority: "medium",
+        projectId: selectedProjectId,
+      });
+      addLog(`TASK_BUFFER_COMMITTED_TO_${selectedProject.technicalId}`);
+      ArkanAudio.playFast("system_engage");
+      setQuickBuffer("");
+    };
+
+    if (!bufferedOperation.title) {
+      useDialogStore.getState().openDialog({
+        title: `NEW_OPERATION // ${selectedProject.name}`,
+        description: "DEFINE_OPERATION_TITLE",
+        placeholder: "OPERATION_NAME...",
+        confirmLabel: "COMMIT_TO_STREAM",
+        onConfirm: async (value) => {
+          const normalizedTitle = value?.trim();
+          if (!normalizedTitle) {
+            return;
+          }
+
+          await createOperation(normalizedTitle, "");
+        },
+      });
+      return;
+    }
+
+    await createOperation(bufferedOperation.title, bufferedOperation.description || `Buffered for ${selectedProject.name}`);
+  };
+
+  const handleEditOperation = (task: Task) => {
     ArkanAudio.playFast("system_engage");
-    setQuickBuffer("");
+    useDialogStore.getState().openDialog({
+      title: `EDIT_OPERATION // ${task.title}`,
+      description: "UPDATE_OPERATION_TITLE",
+      placeholder: task.title,
+      confirmLabel: "SAVE_CHANGES",
+      onConfirm: async (value) => {
+        const normalizedTitle = value?.trim();
+        if (!normalizedTitle || normalizedTitle === task.title) {
+          return;
+        }
+
+        await updateTask(task.id, { title: normalizedTitle });
+        addLog(`TASK_${task.id.substring(0, 4)}_RENAMED`);
+        ArkanAudio.playFast("system_execute_clack");
+      },
+    });
   };
 
   const handleToggleTaskStatus = async (task: Task) => {
@@ -427,15 +509,16 @@ export default function OperationsPage() {
                       const activeTasks = relatedTasks.filter((task) => task.status !== "completed").length;
 
                       return (
-                        <OperationsProjectNode
-                          key={project.id}
-                          project={project}
-                          taskCount={relatedTasks.length}
-                          activeCount={activeTasks}
-                          onOpen={expandProject}
-                          onDelete={handleDeleteProject}
-                        />
-                      );
+                          <OperationsProjectNode
+                            key={project.id}
+                            project={project}
+                            taskCount={relatedTasks.length}
+                            activeCount={activeTasks}
+                            onOpen={expandProject}
+                            onEdit={handleEditProject}
+                            onDelete={handleDeleteProject}
+                          />
+                        );
                     })}
                   </div>
                 </div>
@@ -549,7 +632,18 @@ export default function OperationsPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 border border-primary/15 bg-black/70 p-1">
+                  <div className="flex items-center gap-2">
+                    {selectedProject ? (
+                      <button
+                        type="button"
+                        onClick={(event) => handleEditProject(event, selectedProject)}
+                        className="inline-flex items-center gap-2 border border-primary/20 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-primary/70 transition hover:border-primary/45 hover:text-primary"
+                      >
+                        <Pencil size={12} />
+                        Edit_Module
+                      </button>
+                    ) : null}
+                    <div className="flex items-center gap-2 border border-primary/15 bg-black/70 p-1">
                     {[
                       { id: "LIST", label: "LIST", icon: List },
                       { id: "KANBAN", label: "KANBAN", icon: LayoutGrid },
@@ -568,6 +662,7 @@ export default function OperationsPage() {
                         {mode.label}
                       </button>
                     ))}
+                    </div>
                   </div>
                 </div>
 
@@ -585,9 +680,9 @@ export default function OperationsPage() {
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-hidden">
-                  {taskViewMode === "KANBAN" && <KanbanView tasks={filteredProjectTasks} updateTask={updateTask} addLog={addLog} />}
-                  {taskViewMode === "LIST" && <ListView tasks={filteredProjectTasks} />}
-                  {taskViewMode === "GRID" && <GridView tasks={filteredProjectTasks} />}
+                  {taskViewMode === "KANBAN" && <KanbanView tasks={filteredProjectTasks} updateTask={updateTask} addLog={addLog} onEditTask={handleEditOperation} />}
+                  {taskViewMode === "LIST" && <ListView tasks={filteredProjectTasks} onEditTask={handleEditOperation} />}
+                  {taskViewMode === "GRID" && <GridView tasks={filteredProjectTasks} onEditTask={handleEditOperation} />}
                 </div>
               </section>
 
@@ -676,18 +771,28 @@ export default function OperationsPage() {
         </footer>
       </div>
 
-      <ModuleInitModal isOpen={isNewProjectModalOpen} onClose={() => setIsNewProjectModalOpen(false)} />
-    </div>
+        <ModuleInitModal
+          isOpen={isNewProjectModalOpen}
+          project={projectEditorTarget}
+          onSaved={(projectId) => expandProject(projectId)}
+          onClose={() => {
+            setIsNewProjectModalOpen(false);
+            setProjectEditorTarget(null);
+          }}
+        />
+      </div>
   );
 }
 function KanbanView({
   tasks,
   updateTask,
   addLog,
+  onEditTask,
 }: {
   tasks: Task[];
   updateTask: (id: string, updates: Partial<Task>) => Promise<void>;
   addLog: (message: string) => void;
+  onEditTask: (task: Task) => void;
 }) {
   const todos = tasks.filter((task) => task.status === "todo");
   const inProgress = tasks.filter((task) => task.status === "in-progress");
@@ -745,7 +850,19 @@ function KanbanView({
                     <div className={cn("text-[12px] font-semibold uppercase tracking-[0.14em]", task.status === "completed" ? "text-white/35 line-through" : "text-white/85")}>{task.title}</div>
                     <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-primary/35">{task.priority} // {task.id.substring(0, 6)}</div>
                   </div>
-                  <Zap size={14} className={cn(task.status === "in-progress" ? "text-primary" : "text-primary/25")} />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onEditTask(task);
+                      }}
+                      className="rounded-sm border border-primary/15 p-1 text-primary/45 transition hover:border-primary/35 hover:text-primary"
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <Zap size={14} className={cn(task.status === "in-progress" ? "text-primary" : "text-primary/25")} />
+                  </div>
                 </div>
               </div>
             ))}
@@ -756,7 +873,7 @@ function KanbanView({
   );
 }
 
-function ListView({ tasks }: { tasks: Task[] }) {
+function ListView({ tasks, onEditTask }: { tasks: Task[]; onEditTask: (task: Task) => void }) {
   return (
     <div className="h-full space-y-2 overflow-y-auto p-5 custom-scrollbar">
       {tasks.map((task) => (
@@ -766,9 +883,18 @@ function ListView({ tasks }: { tasks: Task[] }) {
             <div className={cn("text-[12px] font-semibold uppercase tracking-[0.14em]", task.status === "completed" ? "text-white/35 line-through" : "text-white/85")}>{task.title}</div>
             {task.description ? <div className="mt-2 text-[10px] uppercase tracking-[0.16em] text-primary/35">{task.description}</div> : null}
           </div>
-          <div className="text-right text-[10px] uppercase tracking-[0.18em] text-primary/45">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => onEditTask(task)}
+              className="rounded-sm border border-primary/15 p-2 text-primary/45 transition hover:border-primary/35 hover:text-primary"
+            >
+              <Pencil size={12} />
+            </button>
+            <div className="text-right text-[10px] uppercase tracking-[0.18em] text-primary/45">
             <div>{task.priority}</div>
             <div className="mt-2">{task.status}</div>
+            </div>
           </div>
         </div>
       ))}
@@ -777,7 +903,7 @@ function ListView({ tasks }: { tasks: Task[] }) {
   );
 }
 
-function GridView({ tasks }: { tasks: Task[] }) {
+function GridView({ tasks, onEditTask }: { tasks: Task[]; onEditTask: (task: Task) => void }) {
   return (
     <div className="h-full overflow-y-auto p-5 custom-scrollbar">
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
@@ -785,7 +911,16 @@ function GridView({ tasks }: { tasks: Task[] }) {
           <div key={task.id} className="flex min-h-[170px] flex-col border border-primary/15 bg-[#090903] p-4 transition hover:border-primary/35">
             <div className="flex items-start justify-between gap-3">
               <span className="text-[9px] uppercase tracking-[0.18em] text-primary/30">{task.id.substring(0, 8)}</span>
-              <div className={cn("h-2 w-2 rounded-full", task.status === "completed" ? "bg-green-500/70" : task.status === "in-progress" ? "bg-primary animate-pulse" : "bg-primary/40")} />
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => onEditTask(task)}
+                  className="rounded-sm border border-primary/15 p-2 text-primary/45 transition hover:border-primary/35 hover:text-primary"
+                >
+                  <Pencil size={12} />
+                </button>
+                <div className={cn("h-2 w-2 rounded-full", task.status === "completed" ? "bg-green-500/70" : task.status === "in-progress" ? "bg-primary animate-pulse" : "bg-primary/40")} />
+              </div>
             </div>
             <div className={cn("mt-5 text-[12px] font-semibold uppercase tracking-[0.14em]", task.status === "completed" ? "text-white/35 line-through" : "text-white/85")}>{task.title}</div>
             <div className="mt-auto border-t border-primary/10 pt-3 text-[10px] uppercase tracking-[0.18em] text-primary/45">

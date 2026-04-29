@@ -27,7 +27,7 @@ const SUB_NAV = [
 ];
 
 export default function ExpeditionsPage() {
-  const { sectors, isLoading, fetchManifest, initializeSector, addComponent, deManifestItem, getReadiness } = useExpeditionStore();
+  const { sectors, isLoading, lastError, fetchManifest, initializeSector, addComponent, deManifestItem, getReadiness } = useExpeditionStore();
   const { openDialog } = useDialogStore();
   const logs = useSystemLogStore((state) => state.logs);
   const { cpuUsage, memUsage, netSpeed } = useChronosStore();
@@ -95,8 +95,11 @@ export default function ExpeditionsPage() {
 
   const handleManifestItem = async (itemId: string) => {
     setManifestingIds((current) => [...current, itemId]);
-    await deManifestItem(itemId);
-    setManifestingIds((current) => current.filter((entry) => entry !== itemId));
+    try {
+      await deManifestItem(itemId);
+    } finally {
+      setManifestingIds((current) => current.filter((entry) => entry !== itemId));
+    }
   };
 
   return (
@@ -173,6 +176,12 @@ export default function ExpeditionsPage() {
             </button>
           </div>
 
+          {lastError ? (
+            <div className="mx-6 mb-6 border border-[#6a2f1a] bg-[#1c0c08] px-4 py-4 text-[11px] uppercase tracking-[0.2em] text-[#f2b597]">
+              CHECKLIST_SYNC_ALERT: {lastError}
+            </div>
+          ) : null}
+
           <div className="flex-1 overflow-auto px-6 py-6">
             {isLoading ? (
               <div className="flex h-full items-center justify-center border border-dashed border-[#353911] bg-[#090b04] text-[12px] uppercase tracking-[0.32em] text-[#9fa739]">
@@ -237,6 +246,12 @@ export default function ExpeditionsPage() {
                           })}
                         </AnimatePresence>
 
+                        {sector.items.length === 0 ? (
+                          <div className="flex min-h-[180px] items-center justify-center border border-dashed border-[#2f340f] bg-[#0b0d05] px-4 text-center text-[11px] uppercase tracking-[0.26em] text-[#778024]">
+                            LIST_READY // ADD THE FIRST COMPONENT TO START THIS CHECKLIST
+                          </div>
+                        ) : null}
+
                         <button
                           type="button"
                           onClick={() => handleAddComponent(sector.id)}
@@ -254,6 +269,9 @@ export default function ExpeditionsPage() {
                 <div className="text-center">
                   <Rocket className="mx-auto h-12 w-12 text-[#5f6720]" />
                   <p className="mt-5 text-[12px] uppercase tracking-[0.34em] text-[#9ea73d]">NO_ACTIVE_COLONY_LISTS</p>
+                  <p className="mt-3 text-[11px] uppercase tracking-[0.22em] text-[#67701f]">
+                    CREATE A LIST AND IT WILL APPEAR HERE IMMEDIATELY
+                  </p>
                   <button
                     type="button"
                     onClick={handleInitializeSector}

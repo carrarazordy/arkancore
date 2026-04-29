@@ -22,7 +22,7 @@ import ArchivePage from "./pages/Archive";
 import ExpeditionsPage from "./pages/Expeditions";
 
 const Shopping = ExpeditionsPage;
-const Security = () => <div className="p-8 text-primary font-mono text-xl">IDENTITY_SECURITY // LOCKED</div>;
+const Security = () => <div className="p-8 text-primary font-mono text-xl">IDENTITY_SECURITY // ACCESS_SETTINGS_AVAILABLE_IN_SYSTEM_CONFIGURATION</div>;
 const GlobalArchive = () => <div className="p-8 text-primary font-mono text-xl">GLOBAL_ARCHIVE // ACCESSED</div>;
 
 type AuthLocationState = {
@@ -55,6 +55,7 @@ function AuthScreen({ mode }: { mode: "login" | "signup" }) {
   const location = useLocation();
   const isSignup = mode === "signup";
   const locationState = (location.state as AuthLocationState | null) ?? null;
+  const authTitleLines = isSignup ? ["ACCOUNT_", "INITIALIZATION"] : ["SYSTEM_", "AUTHENTICATION"];
 
   const [nodeName, setNodeName] = React.useState("");
   const [email, setEmail] = React.useState(locationState?.pendingEmail ?? "");
@@ -253,8 +254,12 @@ function AuthScreen({ mode }: { mode: "login" | "signup" }) {
               <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full border border-primary bg-primary/5 shadow-[0_0_25px_rgba(255,255,0,0.12)]">
                 <Shield className="h-7 w-7 text-primary" />
               </div>
-              <h1 className="font-sans text-[30px] font-black uppercase leading-[0.92] tracking-[0.14em] text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.08)] sm:text-[36px]">
-                {isSignup ? "ACCOUNT_INITIALIZATION" : "SYSTEM_AUTHENTICATION"}
+              <h1 className="max-w-[280px] font-sans text-[24px] font-black uppercase leading-[0.88] tracking-[0.08em] text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.08)] sm:max-w-[320px] sm:text-[32px] sm:tracking-[0.12em]">
+                {authTitleLines.map((line) => (
+                  <span key={line} className="block">
+                    {line}
+                  </span>
+                ))}
               </h1>
               <p className="mt-2 text-[10px] uppercase tracking-[0.24em] text-white/35">
                 {isSignup ? "Identity node provisioning required" : "Identity verification required"}

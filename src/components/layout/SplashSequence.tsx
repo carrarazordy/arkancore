@@ -46,7 +46,7 @@ export function SplashSequence({ onComplete }: { onComplete: () => void }) {
         <AnimatePresence>
             {step <= 3 && (
                 <motion.div
-                    className="fixed inset-0 z-[100] flex items-center justify-center overflow-hidden bg-black text-primary font-mono"
+                    className="fixed inset-0 z-[1200] flex items-center justify-center overflow-hidden bg-black text-primary font-mono"
                     exit={{ opacity: 0 }}
                 >
                     <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,0,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,0,0.04)_1px,transparent_1px)] bg-[size:40px_40px] opacity-40" />

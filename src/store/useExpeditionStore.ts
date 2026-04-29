@@ -14,10 +14,19 @@ import { getAuthUser } from "@/lib/auth";
 export type ExpeditionItem = ManifestItemRow;
 export type ExpeditionSector = HydratedExpeditionSector;
 
+function formatExpeditionError(error: unknown) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.toUpperCase();
+  }
+
+  return "UNKNOWN_EXPEDITION_FAILURE";
+}
+
 interface ExpeditionState {
   sectors: ExpeditionSector[];
   archivedCount: number;
   isLoading: boolean;
+  lastError: string | null;
   fetchManifest: () => Promise<void>;
   initializeSector: (label: string) => Promise<void>;
   addComponent: (sectorId: string, label: string, priority?: ExpeditionPriority) => Promise<void>;
@@ -29,14 +38,16 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
   sectors: [],
   archivedCount: 0,
   isLoading: false,
+  lastError: null,
 
   fetchManifest: async () => {
-    set({ isLoading: true });
+    set({ isLoading: true, lastError: null });
 
     try {
       const user = await getAuthUser();
       if (!user) {
-        set({ sectors: [], archivedCount: 0, isLoading: false });
+        set({ sectors: [], archivedCount: 0, isLoading: false, lastError: "AUTH_SESSION_REQUIRED" });
+        useSystemLogStore.getState().addLog("EXPEDITION_AUTH_SESSION_REQUIRED", "error");
         return;
       }
 
@@ -64,9 +75,12 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
       set({
         sectors: hydrated,
         archivedCount: readiness.manifested,
+        lastError: null,
       });
     } catch (error) {
       console.error("Error fetching expedition manifest:", error);
+      const message = formatExpeditionError(error);
+      set({ lastError: message });
       useSystemLogStore.getState().addLog("EXPEDITION_FETCH_FAILED", "error");
     } finally {
       set({ isLoading: false });
@@ -79,42 +93,56 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
       return;
     }
 
-    const user = await getAuthUser();
-    if (!user) {
-      return;
+    try {
+      const user = await getAuthUser();
+      if (!user) {
+        set({ lastError: "AUTH_SESSION_REQUIRED" });
+        useSystemLogStore.getState().addLog("EXPEDITION_AUTH_SESSION_REQUIRED", "error");
+        return;
+      }
+
+      useSystemLogStore.getState().addLog(`ALLOCATING_NEW_SECTOR:${normalizedLabel}`, "system");
+
+      const nextOrderIndex = get().sectors.reduce(
+        (maxOrder, sector) => Math.max(maxOrder, sector.order_index),
+        -1
+      ) + 1;
+
+      const { data, error } = await supabase
+        .from("expedition_sectors")
+        .insert([
+          {
+            label: normalizedLabel,
+            user_id: user.id,
+            order_index: nextOrderIndex,
+          },
+        ])
+        .select("id,label,order_index")
+        .single();
+
+      if (error || !data) {
+        throw error ?? new Error("SECTOR_INITIALIZATION_FAILED");
+      }
+
+      set((state) => ({
+        sectors: [
+          ...state.sectors,
+          {
+            ...data,
+            items: [],
+            manifestedCount: 0,
+            totalCount: 0,
+          },
+        ].sort((left, right) => left.order_index - right.order_index),
+        lastError: null,
+      }));
+      ArkanAudio.play("system_execute_clack");
+    } catch (error) {
+      console.error("Error initializing expedition sector:", error);
+      const message = formatExpeditionError(error);
+      set({ lastError: message });
+      useSystemLogStore.getState().addLog(`SECTOR_INITIALIZATION_FAILED:${message}`, "error");
     }
-
-    useSystemLogStore.getState().addLog(`ALLOCATING_NEW_SECTOR:${normalizedLabel}`, "system");
-
-    const { data, error } = await supabase
-      .from("expedition_sectors")
-      .insert([
-        {
-          label: normalizedLabel,
-          user_id: user.id,
-          order_index: get().sectors.length,
-        },
-      ])
-      .select("id,label,order_index")
-      .single();
-
-    if (error || !data) {
-      useSystemLogStore.getState().addLog("SECTOR_INITIALIZATION_FAILED", "error");
-      return;
-    }
-
-    set((state) => ({
-      sectors: [
-        ...state.sectors,
-        {
-          ...data,
-          items: [],
-          manifestedCount: 0,
-          totalCount: 0,
-        },
-      ],
-    }));
-    ArkanAudio.play("system_execute_clack");
   },
 
   addComponent: async (sectorId: string, label: string, priority: ExpeditionPriority = "medium") => {
@@ -123,43 +151,52 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
       return;
     }
 
-    const user = await getAuthUser();
-    if (!user) {
-      return;
+    try {
+      const user = await getAuthUser();
+      if (!user) {
+        set({ lastError: "AUTH_SESSION_REQUIRED" });
+        useSystemLogStore.getState().addLog("EXPEDITION_AUTH_SESSION_REQUIRED", "error");
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("expedition_items")
+        .insert([
+          {
+            user_id: user.id,
+            sector_id: sectorId,
+            label: normalizedLabel,
+            is_manifested: false,
+            priority,
+          },
+        ])
+        .select("id,sector_id,label,is_manifested,technical_id,priority,created_at")
+        .single();
+
+      if (error || !data) {
+        throw error ?? new Error("COMPONENT_APPEND_FAILED");
+      }
+
+      set((state) => ({
+        sectors: state.sectors.map((sector) =>
+          sector.id === sectorId
+            ? {
+                ...sector,
+                items: [...sector.items, data],
+                totalCount: sector.totalCount + 1,
+              }
+            : sector
+        ),
+        lastError: null,
+      }));
+      useSystemLogStore.getState().addLog(`COMPONENT_BUFFERED:${normalizedLabel}`, "status");
+      ArkanAudio.play("key_tick_mechanical");
+    } catch (error) {
+      console.error("Error buffering expedition component:", error);
+      const message = formatExpeditionError(error);
+      set({ lastError: message });
+      useSystemLogStore.getState().addLog(`COMPONENT_APPEND_FAILED:${message}`, "error");
     }
-
-    const { data, error } = await supabase
-      .from("expedition_items")
-      .insert([
-        {
-          user_id: user.id,
-          sector_id: sectorId,
-          label: normalizedLabel,
-          is_manifested: false,
-          priority,
-        },
-      ])
-      .select("id,sector_id,label,is_manifested,technical_id,priority,created_at")
-      .single();
-
-    if (error || !data) {
-      useSystemLogStore.getState().addLog("COMPONENT_APPEND_FAILED", "error");
-      return;
-    }
-
-    set((state) => ({
-      sectors: state.sectors.map((sector) =>
-        sector.id === sectorId
-          ? {
-              ...sector,
-              items: [...sector.items, data],
-              totalCount: sector.totalCount + 1,
-            }
-          : sector
-      ),
-    }));
-    useSystemLogStore.getState().addLog(`COMPONENT_BUFFERED:${normalizedLabel}`, "status");
-    ArkanAudio.play("key_tick_mechanical");
   },
 
   deManifestItem: async (itemId: string) => {
@@ -174,32 +211,39 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
     useSystemLogStore.getState().addLog(`INITIATING_DEMANIFESTATION:${item.technical_id}`, "status");
     ArkanAudio.play("ui_confirm_ping");
 
-    const { error } = await supabase
-      .from("expedition_items")
-      .update({
-        is_manifested: true,
-        de_manifested_at: new Date().toISOString(),
-      })
-      .eq("id", itemId);
+    try {
+      const { error } = await supabase
+        .from("expedition_items")
+        .update({
+          is_manifested: true,
+          de_manifested_at: new Date().toISOString(),
+        })
+        .eq("id", itemId);
 
-    if (error) {
-      useSystemLogStore.getState().addLog(`ITEM_TRANSFER_FAILED:${item.technical_id}`, "error");
-      return;
+      if (error) {
+        throw error;
+      }
+
+      set((current) => ({
+        archivedCount: current.archivedCount + 1,
+        sectors: current.sectors.map((candidate) =>
+          candidate.id === sector.id
+            ? {
+                ...candidate,
+                items: candidate.items.filter((entry) => entry.id !== itemId),
+                manifestedCount: candidate.manifestedCount + 1,
+              }
+            : candidate
+        ),
+        lastError: null,
+      }));
+      useSystemLogStore.getState().addLog(`ITEM_TRANSFER_TO_ARCHIVE:SUCCESS // ${item.technical_id}`, "system");
+    } catch (error) {
+      console.error("Error transferring expedition item to archive:", error);
+      const message = formatExpeditionError(error);
+      set({ lastError: message });
+      useSystemLogStore.getState().addLog(`ITEM_TRANSFER_FAILED:${item.technical_id}:${message}`, "error");
     }
-
-    set((current) => ({
-      archivedCount: current.archivedCount + 1,
-      sectors: current.sectors.map((candidate) =>
-        candidate.id === sector.id
-          ? {
-              ...candidate,
-              items: candidate.items.filter((entry) => entry.id !== itemId),
-              manifestedCount: candidate.manifestedCount + 1,
-            }
-          : candidate
-      ),
-    }));
-    useSystemLogStore.getState().addLog(`ITEM_TRANSFER_TO_ARCHIVE:SUCCESS // ${item.technical_id}`, "system");
   },
 
   getReadiness: () => computeExpeditionReadiness(get().sectors),

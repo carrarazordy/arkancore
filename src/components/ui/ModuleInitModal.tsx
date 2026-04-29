@@ -2,21 +2,71 @@ import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArkanAudio } from "@/lib/audio/ArkanAudio";
-import { useProjectStore } from "@/store/useProjectStore";
+import { Project, useProjectStore } from "@/store/useProjectStore";
 import { Settings2, RefreshCw, X, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_SECTOR = "SECTOR_ALPHA_01 [VIRTUAL]";
 const DEFAULT_PRIORITY = "ROUTINE";
 
-export function ModuleInitModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const { addProject } = useProjectStore();
-  const [identifier, setIdentifier] = useState("");
+type ModuleInitModalProps = {
+  isOpen: boolean;
+  onClose: () => void;
+  project?: Project | null;
+  onSaved?: (projectId: string) => void;
+};
+
+function buildProjectDescription(sector: string, missionBrief: string) {
+  const normalizedBrief = missionBrief.trim();
+  if (!normalizedBrief) {
+    return `SECTOR: ${sector}`;
+  }
+
+  return `SECTOR: ${sector} // ${normalizedBrief}`;
+}
+
+function extractSector(description?: string) {
+  if (!description) {
+    return DEFAULT_SECTOR;
+  }
+
+  const sectorMatch = description.match(/^SECTOR:\s*(.*?)(?:\s*\/\/|$)/);
+  if (sectorMatch?.[1]) {
+    return sectorMatch[1].trim();
+  }
+
+  return DEFAULT_SECTOR;
+}
+
+function extractMissionBrief(description?: string) {
+  if (!description) {
+    return "";
+  }
+
+  const prefixMatch = description.match(/^SECTOR:\s*.*?\/\/\s*(.*)$/);
+  if (prefixMatch?.[1]) {
+    return prefixMatch[1].trim();
+  }
+
+  return description;
+}
+
+export function ModuleInitModal({ isOpen, onClose, project = null, onSaved }: ModuleInitModalProps) {
+  const { addProject, updateProject, projects } = useProjectStore();
+  const [projectName, setProjectName] = useState("");
+  const [technicalId, setTechnicalId] = useState("");
   const [sector, setSector] = useState(DEFAULT_SECTOR);
   const [priority, setPriority] = useState(DEFAULT_PRIORITY);
+  const [missionBrief, setMissionBrief] = useState("");
 
-  const generateId = () => {
-    setIdentifier(`ARKAN-MOD-${Math.floor(Math.random() * 9000) + 1000}-X`);
+  const generateTechnicalIdPreview = () => {
+    const nextProjectNumber =
+      projects.reduce((maxValue, currentProject) => {
+        const match = currentProject.technicalId.match(/^PRJ-(\d+)$/i);
+        return Math.max(maxValue, match ? Number(match[1]) : 0);
+      }, 0) + 1;
+
+    setTechnicalId(`PRJ-${String(nextProjectNumber).padStart(3, "0")}`);
   };
 
   useEffect(() => {
@@ -25,18 +75,45 @@ export function ModuleInitModal({ isOpen, onClose }: { isOpen: boolean; onClose:
     }
 
     ArkanAudio.playFast("ui_modal_open");
-    setSector(DEFAULT_SECTOR);
-    setPriority(DEFAULT_PRIORITY);
-    generateId();
-  }, [isOpen]);
+    setProjectName(project?.name ?? "");
+    setSector(extractSector(project?.description));
+    setPriority(project?.status ?? DEFAULT_PRIORITY);
+    setMissionBrief(extractMissionBrief(project?.description));
 
-  const handleSubmit = () => {
-    addProject({
-      name: identifier,
-      progress: 0,
-      status: priority,
-      description: `SECTOR: ${sector} // PRIORITY: ${priority}`,
-    });
+    if (project?.technicalId) {
+      setTechnicalId(project.technicalId);
+    } else {
+      generateTechnicalIdPreview();
+    }
+  }, [isOpen, project, projects]);
+
+  const handleSubmit = async () => {
+    const normalizedName = projectName.trim();
+    if (!normalizedName) {
+      return;
+    }
+
+    const nextDescription = buildProjectDescription(sector, missionBrief);
+
+    if (project) {
+      await updateProject(project.id, {
+        name: normalizedName,
+        technicalId,
+        status: priority,
+        description: nextDescription,
+      });
+      onSaved?.(project.id);
+    } else {
+      const createdProject = addProject({
+        name: normalizedName,
+        technicalId,
+        progress: 0,
+        status: priority,
+        description: nextDescription,
+      });
+      onSaved?.(createdProject.id);
+    }
+
     ArkanAudio.playFast("system_execute_clack");
     onClose();
   };
@@ -95,16 +172,16 @@ export function ModuleInitModal({ isOpen, onClose }: { isOpen: boolean; onClose:
               />
               <div className="absolute inset-x-0 z-10 h-[2px] bg-primary/10 animate-[scan_8s_linear_infinite]" />
 
-              <div className="relative z-10 mb-10 flex items-start justify-between">
-                <div>
-                  <div className="mb-1 flex items-center gap-2">
-                    <Settings2 className="h-4 w-4" />
-                    <h2 className="text-xs font-bold tracking-widest opacity-70">CORE_OPERATION_REQUEST</h2>
+                <div className="relative z-10 mb-10 flex items-start justify-between">
+                  <div>
+                    <div className="mb-1 flex items-center gap-2">
+                      <Settings2 className="h-4 w-4" />
+                      <h2 className="text-xs font-bold tracking-widest opacity-70">CORE_OPERATION_REQUEST</h2>
+                    </div>
+                    <h1 className="text-2xl font-bold tracking-tighter">
+                      {project ? "MODULE_RECONFIGURATION" : "MODULE_INITIALIZATION"} <span className="font-light text-primary/40">//</span> DEFINE_PARAMETERS:
+                    </h1>
                   </div>
-                  <h1 className="text-2xl font-bold tracking-tighter">
-                    MODULE_INITIALIZATION <span className="font-light text-primary/40">//</span> DEFINE_SECTOR:
-                  </h1>
-                </div>
                 <button
                   type="button"
                   onClick={() => {
@@ -120,17 +197,30 @@ export function ModuleInitModal({ isOpen, onClose }: { isOpen: boolean; onClose:
               <div className="relative z-10 grid grid-cols-12 gap-8">
                 <div className="col-span-7 flex flex-col gap-6">
                   <div>
-                    <label className="mb-2 block text-[10px] font-bold tracking-widest opacity-60">IDENTIFIER_KEY</label>
+                    <label className="mb-2 block text-[10px] font-bold tracking-widest opacity-60">MODULE_NAME</label>
+                    <input
+                      className="w-full border border-primary/40 bg-primary/5 px-3 py-2 text-sm font-mono text-primary outline-none focus:border-primary focus:shadow-[0_0_10px_rgba(255,255,0,0.4)]"
+                      type="text"
+                      value={projectName}
+                      onChange={(event) => setProjectName(event.target.value)}
+                      placeholder="PROJECT_ORION"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-[10px] font-bold tracking-widest opacity-60">PROJECT_CODE</label>
                     <div className="flex gap-2">
                       <input
                         className="w-full border border-primary/40 bg-primary/5 px-3 py-2 text-sm font-mono text-primary outline-none focus:border-primary focus:shadow-[0_0_10px_rgba(255,255,0,0.4)]"
-                        readOnly
                         type="text"
-                        value={identifier}
+                        value={technicalId}
+                        onChange={(event) => setTechnicalId(event.target.value)}
+                        placeholder="PRJ-003"
                       />
                       <button
                         type="button"
-                        onClick={generateId}
+                        onClick={generateTechnicalIdPreview}
                         className="flex items-center justify-center border border-primary/40 bg-primary/10 px-3 transition-colors hover:bg-primary hover:text-black"
                       >
                         <RefreshCw className="h-4 w-4" />
@@ -140,15 +230,12 @@ export function ModuleInitModal({ isOpen, onClose }: { isOpen: boolean; onClose:
 
                   <div>
                     <label className="mb-2 block text-[10px] font-bold tracking-widest opacity-60">SECTOR_ALLOCATION</label>
-                    <select
+                    <input
                       value={sector}
                       onChange={(event) => setSector(event.target.value)}
-                      className="w-full appearance-none border border-primary/40 bg-black px-3 py-2 text-sm font-mono text-primary outline-none focus:border-primary focus:shadow-[0_0_10px_rgba(255,255,0,0.4)]"
-                    >
-                      <option>SECTOR_ALPHA_01 [VIRTUAL]</option>
-                      <option>SECTOR_BRAVO_09 [PHYSICAL]</option>
-                      <option>SECTOR_GAMMA_NULL [ENCRYPTED]</option>
-                    </select>
+                      className="w-full border border-primary/40 bg-black px-3 py-2 text-sm font-mono text-primary outline-none focus:border-primary focus:shadow-[0_0_10px_rgba(255,255,0,0.4)]"
+                      placeholder="SECTOR_ALPHA_01 [VIRTUAL]"
+                    />
                   </div>
 
                   <div>
@@ -172,6 +259,16 @@ export function ModuleInitModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                     </div>
                   </div>
 
+                  <div>
+                    <label className="mb-2 block text-[10px] font-bold tracking-widest opacity-60">MISSION_BRIEF</label>
+                    <textarea
+                      value={missionBrief}
+                      onChange={(event) => setMissionBrief(event.target.value)}
+                      placeholder="DEFINE_OBJECTIVE_AND_NOTES..."
+                      className="min-h-[120px] w-full resize-none border border-primary/40 bg-black px-3 py-3 text-sm font-mono text-primary outline-none focus:border-primary focus:shadow-[0_0_10px_rgba(255,255,0,0.4)] placeholder:text-primary/25"
+                    />
+                  </div>
+
                   <div className="pt-4">
                     <div className="mb-2 flex items-center justify-between">
                       <label className="text-[10px] font-bold tracking-widest opacity-60">MEMORY_QUOTA_RESERVE</label>
@@ -187,10 +284,12 @@ export function ModuleInitModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                   <div className="border border-primary/20 bg-primary/5 p-3">
                     <div className="mb-2 flex items-center gap-2">
                       <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-                      <span className="text-[10px] font-bold">KERNEL_STATUS_ACTIVE</span>
+                      <span className="text-[10px] font-bold">{project ? "MODULE_UPDATE_READY" : "KERNEL_STATUS_ACTIVE"}</span>
                     </div>
                     <p className="text-[10px] leading-relaxed opacity-60">
-                      INITIALIZING THE MODULE WILL ALLOCATE THREADS 09 THROUGH 24 TO THE DESIGNATED SECTOR. ENSURE HANDSHAKE PROTOCOLS ARE SYNCED.
+                      {project
+                        ? "UPDATE THE ACTIVE MODULE METADATA BELOW. SAVING WILL APPLY THE NEW LABEL, STATUS, AND MISSION BRIEF IMMEDIATELY."
+                        : "INITIALIZING THE MODULE WILL CREATE A NEW ACTIVE OPERATION STREAM WITH THE LABELS AND STATUS YOU DEFINE HERE."}
                     </p>
                   </div>
                   <div className="mt-auto flex flex-col gap-2">
@@ -230,7 +329,7 @@ export function ModuleInitModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                     onClick={handleSubmit}
                     className="flex items-center gap-2 bg-primary px-8 py-2 text-[11px] font-black uppercase text-black transition-all hover:shadow-[0_0_20px_rgba(255,255,0,0.5)]"
                   >
-                    <span>Initiate_Protocol</span>
+                    <span>{project ? "Save_Module" : "Initiate_Protocol"}</span>
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </button>
                 </div>
