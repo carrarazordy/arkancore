@@ -5,9 +5,12 @@ import {
   Clock,
   Cpu,
   Database,
+  Edit3,
   LayoutGrid,
   Plus,
+  Save,
   Search,
+  Settings2,
   Terminal as TerminalIcon,
   Trash2,
   Zap,
@@ -27,6 +30,23 @@ import { SharedProjectCard } from "@/components/ui/SharedProjectCard";
 import { TechnicalGridBackground } from "@/components/ui/TechnicalGridBackground";
 import { ProjectHeaderBar, TelemetryStatusCard, CollaboratorsCard } from "@/components/ui/ProjectShared";
 import { EntropyModal } from "@/components/ui/EntropyModal";
+import { ModuleInitModal } from "@/components/ui/ModuleInitModal";
+
+function buildDefaultProjectNotes(project: { name: string; technicalId: string; description?: string }) {
+  return `# ${project.name}
+
+${project.description || `The implementation of the ${project.technicalId} architecture focuses on decentralized data processing and sub-second decision making within the Arkan environment.`}
+
+## Key Objectives
+
+01. Latency reduction in neural sync protocols.
+02. Encryption hardening via quantum-resistant algorithms.
+03. API integration for external telemetry node clusters.
+
+## Operational Roadmap
+
+Current progress suggests a stable deployment within the next 48 hours. Monitoring nodes are active in the EMEA and APAC regions.`;
+}
 
 function formatElapsed(milliseconds: number) {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -226,6 +246,9 @@ export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [quickNote, setQuickNote] = useState("");
   const [isEntropyModalOpen, setIsEntropyModalOpen] = useState(false);
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [isDocEditing, setIsDocEditing] = useState(false);
+  const [docDraft, setDocDraft] = useState("");
   const [now, setNow] = useState(Date.now());
   const sessionStartRef = useRef(Date.now());
   const sessionId = useMemo(
@@ -287,6 +310,17 @@ export default function DashboardPage() {
     [projects, selectedProjectId]
   );
 
+  useEffect(() => {
+    if (!selectedProject) {
+      setDocDraft("");
+      setIsDocEditing(false);
+      return;
+    }
+
+    setDocDraft(selectedProject.notes || buildDefaultProjectNotes(selectedProject));
+    setIsDocEditing(false);
+  }, [selectedProject?.id, selectedProject?.notes, selectedProject?.description]);
+
   const inboxTasks = useMemo(
     () => tasks.filter((task) => !task.projectId || task.projectId === "inbox" || task.projectId === "null"),
     [tasks]
@@ -306,6 +340,49 @@ export default function DashboardPage() {
   const handleInitProject = () => {
     ArkanAudio.playFast("system_engage");
     setIsNewProjectModalOpen(true);
+  };
+
+  const handleEditProject = () => {
+    if (!selectedProject) return;
+    ArkanAudio.playFast("system_engage");
+    setEditingProjectId(selectedProject.id);
+  };
+
+  const handleSaveProjectNotes = async () => {
+    if (!selectedProject) return;
+    await useProjectStore.getState().updateProject(selectedProject.id, { notes: docDraft });
+    useSystemLogStore.getState().addLog(`PROJECT_DOC_SAVED:${selectedProject.technicalId}`, "status");
+    ArkanAudio.playFast("system_execute_clack");
+    setIsDocEditing(false);
+  };
+
+  const handleAddProjectOperation = () => {
+    if (!selectedProject) return;
+
+    useDialogStore.getState().openDialog({
+      title: `ADD_OPERATION // ${selectedProject.name}`,
+      placeholder: "DESCRIBE_OPERATION",
+      confirmLabel: "ADD_OPERATION",
+      onConfirm: async (value) => {
+        const title = value?.trim();
+        if (!title) return;
+
+        const operations = selectedProject.operations ?? [];
+        await useProjectStore.getState().updateProject(selectedProject.id, {
+          operations: [
+            ...operations,
+            {
+              id: crypto.randomUUID(),
+              title,
+              priority: "PENDING",
+              status: "QUEUED",
+              assignee: "ARKAN_CORE",
+            },
+          ],
+        });
+        ArkanAudio.playFast("system_execute_clack");
+      },
+    });
   };
 
   const handleLaunchOmniSearch = () => {
@@ -455,21 +532,20 @@ export default function DashboardPage() {
                     <h2 className="text-xs font-bold uppercase tracking-[0.22em] text-primary">OPERATIONS_LOG</h2>
                   </div>
                   <div className="flex-1 space-y-4 overflow-y-auto p-4 custom-scrollbar">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold uppercase text-primary/40">Priority: CRITICAL</label>
-                      <div className="border border-primary/20 bg-primary/5 p-3">
-                        <p className="text-sm font-medium text-white/90">Initialize Neural Sync Protocols</p>
-                        <p className="mt-1 text-[10px] text-primary/40">Status: DEPLOYED // ID: 882-QX</p>
+                    {(selectedProject.operations ?? []).map((operation) => (
+                      <div key={operation.id} className="space-y-1">
+                        <label className="text-[10px] font-bold uppercase text-primary/40">Priority: {operation.priority}</label>
+                        <div className="border border-primary/20 bg-primary/5 p-3">
+                          <p className="text-sm font-medium text-white/90">{operation.title}</p>
+                          <p className="mt-1 text-[10px] text-primary/40">Status: {operation.status} // {operation.assignee ?? "UNASSIGNED"}</p>
+                        </div>
                       </div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold uppercase text-primary/40">Priority: PENDING</label>
-                      <div className="border border-white/5 bg-white/5 p-3">
-                        <p className="text-sm font-medium text-white/70">Refactor Core Logic v2.4</p>
-                        <p className="mt-1 text-[10px] text-primary/40">Assignee: ARKAN_CORE</p>
-                      </div>
-                    </div>
-                    <button className="w-full border border-dashed border-primary/20 py-2 text-[10px] uppercase tracking-[0.2em] text-primary/60 transition-all hover:bg-primary/5 hover:text-primary">
+                    ))}
+                    <button
+                      type="button"
+                      onClick={handleAddProjectOperation}
+                      className="w-full border border-dashed border-primary/20 py-2 text-[10px] uppercase tracking-[0.2em] text-primary/60 transition-all hover:bg-primary/5 hover:text-primary"
+                    >
                       + ADD_NEW_OPERATION
                     </button>
                   </div>
@@ -480,46 +556,36 @@ export default function DashboardPage() {
                     <div className="flex items-center gap-3">
                       <h2 className="text-xs font-bold uppercase tracking-[0.22em] text-white/70">ARCHIVE_DOC // CORE_SPECS.md</h2>
                     </div>
-                    <span className="text-[10px] uppercase tracking-[0.2em] text-primary/40">MODE: LIVE_MARKDOWN</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleEditProject}
+                        className="flex items-center gap-2 border border-primary/15 bg-primary/5 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-primary/65 transition-colors hover:border-primary/40 hover:text-primary"
+                      >
+                        <Settings2 className="h-3.5 w-3.5" />
+                        EDIT_MODULE
+                      </button>
+                      <button
+                        type="button"
+                        onClick={isDocEditing ? handleSaveProjectNotes : () => setIsDocEditing(true)}
+                        className="flex items-center gap-2 border border-primary/20 bg-primary/10 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-primary transition-colors hover:bg-primary hover:text-black"
+                      >
+                        {isDocEditing ? <Save className="h-3.5 w-3.5" /> : <Edit3 className="h-3.5 w-3.5" />}
+                        {isDocEditing ? "SAVE_DOC" : "EDIT_DOC"}
+                      </button>
+                    </div>
                   </div>
                   <div className="flex-1 overflow-y-auto p-8 font-mono text-sm leading-relaxed custom-scrollbar">
-                    <div className="mx-auto max-w-2xl space-y-6">
-                      <div className="border-l-2 border-primary py-1 pl-4">
-                        <h1 className="text-2xl font-black uppercase tracking-tight text-white">{selectedProject.name}</h1>
-                      </div>
-                      <p className="text-primary/60">
-                        The implementation of the <code className="bg-primary/10 px-1 text-primary">{selectedProject.technicalId}</code> architecture focuses on decentralized data
-                        processing and sub-second decision making within the Arkan environment.
-                      </p>
-
-                      <div className="border border-primary/10 bg-black/40 p-4">
-                        <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.22em] text-primary">Key Objectives</h3>
-                        <ul className="space-y-2 text-xs text-primary/60">
-                          <li className="flex items-center gap-2"><span className="text-primary">01.</span> Latency reduction in neural sync protocols.</li>
-                          <li className="flex items-center gap-2"><span className="text-primary">02.</span> Encryption hardening via quantum-resistant algorithms.</li>
-                          <li className="flex items-center gap-2"><span className="text-primary">03.</span> API integration for external telemetry node clusters.</li>
-                        </ul>
-                      </div>
-
-                      <div className="my-8 h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent"></div>
-
-                      <h2 className="text-lg font-bold uppercase text-white/90">Operational Roadmap</h2>
-                      <p className="text-primary/60">
-                        Current progress suggests a stable deployment within the next 48 hours. Monitoring nodes are active in the EMEA and APAC regions.
-                      </p>
-
-                      <div className="relative mt-6 flex h-40 w-full items-center justify-center overflow-hidden rounded-sm border border-primary/10 bg-primary/5">
-                        <div
-                          className="absolute inset-0 opacity-20"
-                          style={{
-                            backgroundImage:
-                              "linear-gradient(rgba(249, 249, 6, 0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(249, 249, 6, 0.2) 1px, transparent 1px)",
-                            backgroundSize: "20px 20px",
-                          }}
-                        />
-                        <span className="text-primary/40">SCHEMATIC: NODE_CLUSTER_ALPHA_7</span>
-                      </div>
-                    </div>
+                    {isDocEditing ? (
+                      <textarea
+                        value={docDraft}
+                        onChange={(event) => setDocDraft(event.target.value)}
+                        className="h-full min-h-[520px] w-full resize-none border border-primary/20 bg-black/65 p-5 text-sm leading-relaxed text-primary outline-none focus:border-primary/50"
+                        spellCheck={false}
+                      />
+                    ) : (
+                      <pre className="mx-auto max-w-3xl whitespace-pre-wrap text-primary/70">{docDraft}</pre>
+                    )}
                   </div>
                 </section>
 
@@ -607,6 +673,15 @@ export default function DashboardPage() {
       <FooterTelemetry logs={logs} cpuUsage={cpuUsage} memUsage={memUsage} netSpeed={netSpeed} />
 
       <EntropyModal isOpen={isEntropyModalOpen} onClose={() => setIsEntropyModalOpen(false)} />
+      <ModuleInitModal
+        isOpen={Boolean(editingProjectId)}
+        project={projects.find((project) => project.id === editingProjectId) ?? null}
+        onClose={() => setEditingProjectId(null)}
+        onSaved={(projectId) => {
+          setSelectedProjectId(projectId);
+          setEditingProjectId(null);
+        }}
+      />
     </div>
   );
 }
