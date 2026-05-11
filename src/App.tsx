@@ -32,6 +32,10 @@ type AuthLocationState = {
 
 function formatAuthError(error: unknown) {
   if (error instanceof Error && error.message.trim()) {
+    if (/failed to fetch|fetch failed|networkerror|load failed/i.test(error.message)) {
+      return "SUPABASE_ENDPOINT_UNREACHABLE // VERIFY VITE_SUPABASE_URL DNS_AND_NETWORK";
+    }
+
     return error.message.toUpperCase();
   }
 
@@ -249,19 +253,19 @@ function AuthScreen({ mode }: { mode: "login" | "signup" }) {
 
       <div className="relative z-20 flex min-h-screen flex-col items-center justify-center px-6 py-20 sm:px-10">
         <div className="w-full max-w-[540px]">
-          <div className="mx-auto w-full max-w-[360px] border border-primary/30 bg-[#0a0a05]/95 p-6 shadow-[0_0_35px_rgba(255,255,0,0.12)] backdrop-blur-sm sm:max-w-[390px] sm:p-8">
+          <div className="mx-auto w-full max-w-[360px] border border-primary/30 bg-[#0a0a05]/95 p-6 shadow-[0_0_35px_rgba(255,255,0,0.12)] backdrop-blur-sm sm:max-w-[400px] sm:p-8">
             <div className="mb-8 flex flex-col items-center text-center">
               <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full border border-primary bg-primary/5 shadow-[0_0_25px_rgba(255,255,0,0.12)]">
                 <Shield className="h-7 w-7 text-primary" />
               </div>
-              <h1 className="max-w-[280px] font-sans text-[24px] font-black uppercase leading-[0.88] tracking-[0.08em] text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.08)] sm:max-w-[320px] sm:text-[32px] sm:tracking-[0.12em]">
+              <h1 className="max-w-[300px] font-sans text-[clamp(1.65rem,7vw,2.55rem)] font-black uppercase leading-[0.95] tracking-[0.035em] text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.08)] sm:max-w-[340px] sm:tracking-[0.07em]">
                 {authTitleLines.map((line) => (
                   <span key={line} className="block">
                     {line}
                   </span>
                 ))}
               </h1>
-              <p className="mt-2 text-[10px] uppercase tracking-[0.24em] text-white/35">
+              <p className="mt-3 text-[10px] uppercase tracking-[0.14em] text-white/35 sm:tracking-[0.2em]">
                 {isSignup ? "Identity node provisioning required" : "Identity verification required"}
               </p>
             </div>
@@ -269,7 +273,7 @@ function AuthScreen({ mode }: { mode: "login" | "signup" }) {
             <form onSubmit={handleSubmit} className="space-y-5">
               {isSignup && (
                 <label className="block">
-                  <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-primary/80">NODE_NAME</span>
+                  <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.16em] text-primary/80">NODE_NAME</span>
                   <div className="flex items-center gap-3 border border-primary/15 bg-black/60 px-4 py-3 transition-colors focus-within:border-primary/45">
                     <UserPlus className="h-4 w-4 text-primary/45" />
                     <input
@@ -278,14 +282,14 @@ function AuthScreen({ mode }: { mode: "login" | "signup" }) {
                       onChange={(e) => setNodeName(e.target.value.toUpperCase())}
                       placeholder="ENTER_IDENTIFIER..."
                       autoComplete="nickname"
-                      className="w-full bg-transparent text-[12px] uppercase tracking-[0.18em] text-white outline-none placeholder:text-white/18"
+                      className="w-full min-w-0 bg-transparent text-[12px] uppercase tracking-[0.08em] text-white outline-none placeholder:text-white/18 sm:tracking-[0.12em]"
                     />
                   </div>
                 </label>
               )}
 
               <label className="block">
-                <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-primary/80">EMAIL_ID</span>
+                <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.16em] text-primary/80">EMAIL_ID</span>
                 <div className="flex items-center gap-3 border border-primary/15 bg-black/60 px-4 py-3 transition-colors focus-within:border-primary/45">
                   <AtSign className="h-4 w-4 text-primary/45" />
                   <input
@@ -294,13 +298,13 @@ function AuthScreen({ mode }: { mode: "login" | "signup" }) {
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="ENTER_EMAIL..."
                     autoComplete="email"
-                    className="w-full bg-transparent text-[12px] tracking-[0.12em] text-white outline-none placeholder:text-white/18"
+                    className="w-full min-w-0 bg-transparent text-[12px] tracking-[0.04em] text-white outline-none placeholder:text-white/18 sm:tracking-[0.08em]"
                   />
                 </div>
               </label>
 
               <label className="block">
-                <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-primary/80">ACCESS_CODE</span>
+                <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.16em] text-primary/80">ACCESS_CODE</span>
                 <div className="flex items-center gap-3 border border-primary/15 bg-black/60 px-4 py-3 transition-colors focus-within:border-primary/45">
                   <LockKeyhole className="h-4 w-4 text-primary/45" />
                   <input
@@ -309,7 +313,7 @@ function AuthScreen({ mode }: { mode: "login" | "signup" }) {
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder={isSignup ? "GENERATE_ACCESS_KEY..." : "........"}
                     autoComplete={isSignup ? "new-password" : "current-password"}
-                    className="w-full bg-transparent text-[12px] tracking-[0.12em] text-white outline-none placeholder:text-white/18"
+                    className="w-full min-w-0 bg-transparent text-[12px] tracking-[0.04em] text-white outline-none placeholder:text-white/18 sm:tracking-[0.08em]"
                   />
                 </div>
               </label>
@@ -335,7 +339,7 @@ function AuthScreen({ mode }: { mode: "login" | "signup" }) {
               <button
                 type="submit"
                 disabled={isSubmitting || !hasSupabaseConfig}
-                className="flex w-full items-center justify-center gap-3 border border-primary bg-primary/10 px-5 py-3 text-[12px] font-black uppercase tracking-[0.36em] text-primary transition-all hover:bg-primary hover:text-black disabled:cursor-not-allowed disabled:border-primary/20 disabled:bg-primary/5 disabled:text-primary/35"
+                className="flex w-full items-center justify-center gap-3 border border-primary bg-primary/10 px-5 py-3 text-[12px] font-black uppercase tracking-[0.16em] text-primary transition-all hover:bg-primary hover:text-black disabled:cursor-not-allowed disabled:border-primary/20 disabled:bg-primary/5 disabled:text-primary/35 sm:tracking-[0.26em]"
               >
                 <span>
                   {isSubmitting ? (isSignup ? "INITIALIZING..." : "AUTHORIZING...") : isSignup ? "INITIALIZE_NODE" : "AUTHORIZED_ACCESS"}
@@ -348,7 +352,7 @@ function AuthScreen({ mode }: { mode: "login" | "signup" }) {
                   type="button"
                   onClick={() => void handleResendConfirmation()}
                   disabled={isResendingConfirmation || !hasSupabaseConfig}
-                  className="w-full border border-primary/20 bg-primary/5 px-5 py-3 text-[10px] font-bold uppercase tracking-[0.28em] text-primary/80 transition-colors hover:border-primary/45 hover:bg-primary/10 disabled:cursor-not-allowed disabled:border-primary/10 disabled:text-primary/25"
+                  className="w-full border border-primary/20 bg-primary/5 px-5 py-3 text-[10px] font-bold uppercase tracking-[0.16em] text-primary/80 transition-colors hover:border-primary/45 hover:bg-primary/10 disabled:cursor-not-allowed disabled:border-primary/10 disabled:text-primary/25 sm:tracking-[0.24em]"
                 >
                   {isResendingConfirmation ? "REDISPATCHING_CONFIRMATION..." : "RESEND_CONFIRMATION_LINK"}
                 </button>
@@ -365,7 +369,7 @@ function AuthScreen({ mode }: { mode: "login" | "signup" }) {
               type="button"
               onClick={() => void handleGoogleIdentity()}
               disabled={isSubmitting || isResendingConfirmation || !hasSupabaseConfig}
-              className="w-full border border-primary/15 bg-white/[0.02] px-5 py-3 text-[11px] font-bold uppercase tracking-[0.28em] text-white/65 transition-colors hover:border-primary/35 hover:text-primary disabled:cursor-not-allowed disabled:border-primary/10 disabled:text-white/20"
+              className="w-full border border-primary/15 bg-white/[0.02] px-5 py-3 text-[11px] font-bold uppercase tracking-[0.16em] text-white/65 transition-colors hover:border-primary/35 hover:text-primary disabled:cursor-not-allowed disabled:border-primary/10 disabled:text-white/20 sm:tracking-[0.24em]"
             >
               GOOGLE_IDENTITY
             </button>
@@ -382,7 +386,7 @@ function AuthScreen({ mode }: { mode: "login" | "signup" }) {
           <div className="mx-auto mt-8 flex max-w-[390px] flex-col items-center text-center">
             <Link
               to={isSignup ? "/login" : "/signup"}
-              className="text-[11px] font-bold uppercase tracking-[0.28em] text-primary transition-colors hover:text-white"
+              className="text-[11px] font-bold uppercase tracking-[0.14em] text-primary transition-colors hover:text-white sm:tracking-[0.24em]"
             >
               {isSignup ? "RETURN TO AUTHORIZATION" : "NEW USER? INITIALIZE ACCOUNT"}
             </Link>

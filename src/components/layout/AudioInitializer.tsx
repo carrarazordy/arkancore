@@ -8,9 +8,10 @@ export function AudioInitializer() {
 
     const handleInteraction = useCallback(() => {
         void ArkanAudio.unlock();
-        ArkanAudio.playFast('silent_start');
-        window.removeEventListener('click', handleInteraction);
-        window.removeEventListener('keydown', handleInteraction);
+        window.removeEventListener('pointerdown', handleInteraction, true);
+        window.removeEventListener('touchstart', handleInteraction, true);
+        window.removeEventListener('click', handleInteraction, true);
+        window.removeEventListener('keydown', handleInteraction, true);
     }, []);
 
     // Sync Audio Levels
@@ -26,8 +27,10 @@ export function AudioInitializer() {
     }, []);
 
     useEffect(() => {
-        window.addEventListener('click', handleInteraction);
-        window.addEventListener('keydown', handleInteraction);
+        window.addEventListener('pointerdown', handleInteraction, { capture: true, passive: true });
+        window.addEventListener('touchstart', handleInteraction, { capture: true, passive: true });
+        window.addEventListener('click', handleInteraction, true);
+        window.addEventListener('keydown', handleInteraction, true);
 
         let lastHoverTarget: Element | null = null;
 
@@ -68,8 +71,10 @@ export function AudioInitializer() {
         document.addEventListener('keydown', handleKeyDown);
 
         return () => {
-            window.removeEventListener('click', handleInteraction);
-            window.removeEventListener('keydown', handleInteraction);
+            window.removeEventListener('pointerdown', handleInteraction, true);
+            window.removeEventListener('touchstart', handleInteraction, true);
+            window.removeEventListener('click', handleInteraction, true);
+            window.removeEventListener('keydown', handleInteraction, true);
             document.removeEventListener('mouseover', handleMouseOver);
             document.removeEventListener('click', handleClick);
             document.removeEventListener('keydown', handleKeyDown);

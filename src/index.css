@@ -67,6 +67,31 @@ body {
   background: rgba(255, 255, 0, 0.5);
 }
 
+.audio-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 18px;
+  border: 1px solid var(--color-primary);
+  border-radius: 0;
+  background: #050502;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--color-primary) 45%, transparent);
+}
+
+.audio-range::-moz-range-thumb {
+  width: 14px;
+  height: 18px;
+  border: 1px solid var(--color-primary);
+  border-radius: 0;
+  background: #050502;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--color-primary) 45%, transparent);
+}
+
+.audio-range::-moz-range-track {
+  height: 8px;
+  border: 0;
+  background: transparent;
+}
+
 .arkan-grid-overlay {
   position: absolute;
   inset: 0;

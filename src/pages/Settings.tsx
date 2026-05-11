@@ -42,6 +42,13 @@ const AUDIO_KEYS: Array<{ key: keyof AudioLevels; label: string }> = [
   { key: "ambient", label: "AMBIENT_HUM" },
 ];
 
+const AUDIO_TEST_SOUND: Record<keyof AudioLevels, string> = {
+  master: "system_engage",
+  keyboard: "key_tick_mechanical",
+  confirmation: "ui_confirm_ping",
+  ambient: "shimmer",
+};
+
 function encodePayload(value: string) {
   const bytes = new TextEncoder().encode(value);
   let binary = "";
@@ -251,6 +258,11 @@ export default function SettingsPage() {
   const commitAudioChange = (key: keyof AudioLevels, rawValue: number) => {
     ArkanAudio.playFast("key_tick_mechanical");
     addLog(`AUDIO_ENGINE_UPDATED: ${key.toUpperCase()}_${Math.round(rawValue * 100)}PCT`, "system");
+  };
+
+  const handleAudioTest = (key: keyof AudioLevels) => {
+    ArkanAudio.playFast(AUDIO_TEST_SOUND[key]);
+    addLog(`AUDIO_ENGINE_TEST_SIGNAL: ${key.toUpperCase()}`, "system");
   };
 
   const handleTimezoneChange = (nextTimezone: string) => {
@@ -561,12 +573,17 @@ export default function SettingsPage() {
           </SectionFrame>
           <SectionFrame className="col-span-12 lg:col-span-8">
             <SectionTitle icon={Volume2} title="AUDIO_ENGINE" subtitle="Acoustic Feedback Modulation" />
-            <div className="mt-6 grid gap-x-10 gap-y-6 md:grid-cols-2">
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
               {AUDIO_KEYS.map(({ key, label }) => (
-                <div key={key} className="space-y-3">
-                  <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.18em]">
-                    <span className="font-bold text-primary">{label}</span>
-                    <span className="text-primary">{Math.round(audioLevels[key] * 100)}%</span>
+                <div key={key} className="border border-primary/14 bg-black/35 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] font-bold uppercase tracking-[0.16em] text-primary">{label}</div>
+                      <div className="mt-1 text-[9px] uppercase tracking-[0.14em] text-primary/35">SIGNAL_GAIN</div>
+                    </div>
+                    <div className="text-right text-sm font-black uppercase tracking-[0.12em] text-primary">
+                      {Math.round(audioLevels[key] * 100)}%
+                    </div>
                   </div>
                   <input
                     type="range"
@@ -578,8 +595,19 @@ export default function SettingsPage() {
                     onMouseUp={(event) => commitAudioChange(key, parseFloat((event.currentTarget as HTMLInputElement).value))}
                     onTouchEnd={(event) => commitAudioChange(key, parseFloat((event.currentTarget as HTMLInputElement).value))}
                     onKeyUp={(event) => commitAudioChange(key, parseFloat((event.currentTarget as HTMLInputElement).value))}
-                    className="w-full accent-primary"
+                    className="audio-range mt-4 h-2 w-full cursor-pointer appearance-none rounded-none accent-primary"
+                    style={{
+                      background: `linear-gradient(90deg, var(--color-primary) ${audioLevels[key] * 100}%, rgba(255,255,255,0.12) ${audioLevels[key] * 100}%)`,
+                    }}
                   />
+                  <button
+                    type="button"
+                    onClick={() => handleAudioTest(key)}
+                    className="mt-4 flex w-full items-center justify-center gap-2 border border-primary/20 bg-primary/5 px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-primary/75 transition-colors hover:border-primary/45 hover:bg-primary/10 hover:text-primary"
+                  >
+                    <Volume2 className="h-3.5 w-3.5" />
+                    TEST_SIGNAL
+                  </button>
                 </div>
               ))}
             </div>

@@ -81,11 +81,26 @@ export class ArkanAudio {
   private static levels: AudioLevels = DEFAULT_LEVELS;
   private static lastHoverAt = 0;
   private static lastKeyAt = 0;
+  private static unlocked = false;
 
   static async unlock() {
     const context = this.ensureContext();
-    if (context?.state === "suspended") {
-      await context.resume();
+    if (!context) return false;
+
+    try {
+      if (context.state === "suspended") {
+        await context.resume();
+      }
+
+      this.unlocked = context.state === "running";
+      if (this.unlocked) {
+        this.playPattern("silent_start", true);
+      }
+
+      return this.unlocked;
+    } catch {
+      this.unlocked = false;
+      return false;
     }
   }
 
@@ -146,10 +161,20 @@ export class ArkanAudio {
     const context = this.ensureContext();
     if (!context) return;
     if (context.state === "suspended") {
-      void context.resume().then(() => this.playPattern(soundId, fast, channel));
+      void context.resume()
+        .then(() => {
+          this.unlocked = context.state === "running";
+          if (this.unlocked) {
+            this.playPattern(soundId, fast, channel);
+          }
+        })
+        .catch(() => {
+          this.unlocked = false;
+        });
       return;
     }
     if (context.state !== "running") return;
+    this.unlocked = true;
 
     const pattern = SOUND_BANK[soundId] ?? SOUND_BANK.ui_click;
     let cursor = context.currentTime;
@@ -199,6 +224,12 @@ export class ArkanAudio {
 
   private static ensureContext() {
     if (typeof window === "undefined") return null;
+
+    if (this.context?.state === "closed") {
+      this.context = null;
+      this.masterGain = null;
+      this.unlocked = false;
+    }
 
     if (!this.context) {
       const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
