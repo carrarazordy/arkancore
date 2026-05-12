@@ -319,6 +319,9 @@ const FileSystemNode = ({ node, nodes, level = 0, query }: FileSystemNodeProps) 
       <button
         type="button"
         onClick={handleSelect}
+        data-context-target={node.id}
+        data-context-type={node.type === 'folder' ? 'FOLDER' : 'NOTE'}
+        data-context-name={node.title}
         className={cn(
           'group flex w-full items-center gap-2 rounded-sm border px-3 py-2 text-left transition-all',
           isSelected
@@ -862,6 +865,44 @@ export default function NotesPage() {
     [addLog]
   );
 
+  const handleShareCurrentNote = useCallback(async () => {
+    if (!selectedNode || selectedNode.type !== 'note') {
+      addLog('SHARE_REJECTED_NO_NOTE_SELECTED', 'warning');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(selectedContent);
+      addLog(`NOTE_CONTENT_COPIED:${selectedNode.technicalId}`, 'status');
+      ArkanAudio.playFast('system_execute_clack');
+    } catch {
+      addLog('NOTE_SHARE_CLIPBOARD_DENIED', 'error');
+    }
+  }, [addLog, selectedContent, selectedNode]);
+
+  const handlePatternRecognition = useCallback(() => {
+    if (!selectedNode || selectedNode.type !== 'note') {
+      addLog('PATTERN_RECOGNITION_REJECTED_NO_NOTE', 'warning');
+      return;
+    }
+
+    const headings = selectedContent
+      .split('\n')
+      .filter((line) => /^#{1,3}\s+/.test(line))
+      .map((line) => line.replace(/^#{1,3}\s+/, '- '))
+      .join('\n');
+
+    addNode({
+      technicalId: `NT-${Math.floor(100 + Math.random() * 900)}`,
+      title: `${selectedNode.title}_PATTERNS`,
+      type: 'note',
+      parentId: selectedNode.parentId,
+      content: `# ${selectedNode.title}_PATTERNS\n\n${headings || '- NO_HEADINGS_DETECTED'}\n\nGenerated from local archive buffer.`,
+    });
+    addLog(`PATTERN_NOTE_CREATED:${selectedNode.technicalId}`, 'status');
+    ArkanAudio.playFast('system_execute_clack');
+  }, [addLog, addNode, selectedContent, selectedNode]);
+
   const rootNodes = useMemo(() => nodes.filter((node) => node.parentId === null), [nodes]);
   const visibleRootNodes = useMemo(
     () => rootNodes.filter((node) => matchesDirectoryQuery(node, nodes, directoryQuery.trim().toLowerCase())),
@@ -989,7 +1030,7 @@ export default function NotesPage() {
                 </div>
 
                 <div className="flex items-center gap-2 text-white/35">
-                  <button type="button" onClick={() => handleAiAction('NEURAL_ARCHIVE_SHARE_LINK_BUFFERED')} className="border border-primary/15 p-2 transition hover:border-primary/40 hover:text-primary">
+                  <button type="button" onClick={() => void handleShareCurrentNote()} className="border border-primary/15 p-2 transition hover:border-primary/40 hover:text-primary">
                     <Share2 size={14} />
                   </button>
                   <button type="button" onClick={() => handleAiAction('NEURAL_ARCHIVE_CONTEXT_MENU_ENGAGED')} className="border border-primary/15 p-2 transition hover:border-primary/40 hover:text-primary">
@@ -1069,7 +1110,7 @@ export default function NotesPage() {
                   <span className="text-[11px] uppercase tracking-[0.22em] text-white/70">Refine_Note</span>
                 </button>
 
-                <button type="button" onClick={() => handleAiAction('PATTERN_RECOGNITION_DISPATCHED')} className="flex w-full items-center gap-3 border border-primary/15 bg-white/5 px-4 py-4 text-left transition hover:border-primary/35 hover:bg-primary/5">
+                <button type="button" onClick={handlePatternRecognition} className="flex w-full items-center gap-3 border border-primary/15 bg-white/5 px-4 py-4 text-left transition hover:border-primary/35 hover:bg-primary/5">
                   <Search size={18} className="text-primary/70" />
                   <span className="text-[11px] uppercase tracking-[0.22em] text-white/70">Pattern_Recognition</span>
                 </button>
@@ -1086,7 +1127,7 @@ export default function NotesPage() {
                     <button type="button" onClick={handleRefineNote} className="bg-primary px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-black transition hover:brightness-110">
                       Accept
                     </button>
-                    <button type="button" onClick={() => handleAiAction('SUGGESTION_ARCHIVED')} className="border border-primary/15 px-3 py-2 text-[10px] uppercase tracking-[0.24em] text-white/45 transition hover:border-primary/35 hover:text-primary">
+                    <button type="button" onClick={() => addLog('SUGGESTION_DISMISSED', 'status')} className="border border-primary/15 px-3 py-2 text-[10px] uppercase tracking-[0.24em] text-white/45 transition hover:border-primary/35 hover:text-primary">
                       Archive
                     </button>
                   </div>

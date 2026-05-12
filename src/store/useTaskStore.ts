@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 
 export interface Task {
   id: string;
@@ -19,6 +20,7 @@ interface TaskState {
   tasks: Task[];
   addTask: (task: Omit<Task, "id">) => Promise<void>;
   updateTask: (id: string, updates: Partial<Task>) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
 }
 
 const seededTasks: Task[] = [
@@ -80,37 +82,51 @@ const seededTasks: Task[] = [
   },
 ];
 
-export const useTaskStore = create<TaskState>((set) => ({
-  tasks: seededTasks,
-  addTask: async (task) => {
-    set((state) => ({
-      tasks: [
-        ...state.tasks,
-        {
-          ...task,
-          id: Math.random().toString(36).substring(2, 10),
-          updatedAt: new Date(),
-        },
-      ],
-    }));
-  },
-  updateTask: async (id, updates) => {
-    set((state) => ({
-      tasks: state.tasks.map((task) =>
-        task.id === id
-          ? {
+export const useTaskStore = create<TaskState>()(
+  persist(
+    (set) => ({
+      tasks: seededTasks,
+      addTask: async (task) => {
+        set((state) => ({
+          tasks: [
+            ...state.tasks,
+            {
               ...task,
-              ...updates,
-              progress:
-                updates.status === "completed"
-                  ? 100
-                  : updates.status === "todo"
-                    ? 0
-                    : updates.progress ?? task.progress ?? 45,
+              id: crypto.randomUUID(),
               updatedAt: new Date(),
-            }
-          : task
-      ),
-    }));
-  },
-}));
+            },
+          ],
+        }));
+      },
+      updateTask: async (id, updates) => {
+        set((state) => ({
+          tasks: state.tasks.map((task) =>
+            task.id === id
+              ? {
+                  ...task,
+                  ...updates,
+                  progress:
+                    updates.status === "completed"
+                      ? 100
+                      : updates.status === "todo"
+                        ? 0
+                        : updates.progress ?? task.progress ?? 45,
+                  updatedAt: new Date(),
+                }
+              : task
+          ),
+        }));
+      },
+      deleteTask: async (id) => {
+        set((state) => ({
+          tasks: state.tasks.filter((task) => task.id !== id),
+        }));
+      },
+    }),
+    {
+      name: "arkan-tasks",
+      storage: createJSONStorage(() => localStorage),
+      version: 1,
+    }
+  )
+);

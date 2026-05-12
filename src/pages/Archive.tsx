@@ -1,8 +1,10 @@
 ﻿import React, { useState, useEffect, useCallback } from "react";
 import { RefreshCw as Sync, Archive as ArchiveIcon } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import { ArkanAudio } from "@/lib/audio/ArkanAudio";
 import { useSystemLogStore } from "@/store/useSystemLogStore";
+import { useProjectStore } from "@/store/useProjectStore";
+import { useTaskStore } from "@/store/useTaskStore";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
 import { TechnicalGridBackground } from "@/components/ui/TechnicalGridBackground";
@@ -24,12 +26,51 @@ export default function ArchivePage() {
   const [nodes, setNodes] = useState<ArchivedNode[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const addLog = useSystemLogStore((state) => state.addLog);
+  const tasks = useTaskStore((state) => state.tasks);
+  const updateTask = useTaskStore((state) => state.updateTask);
+  const projects = useProjectStore((state) => state.projects);
+  const updateProject = useProjectStore((state) => state.updateProject);
+
+  const buildLocalArchive = useCallback((): ArchivedNode[] => {
+    const completedTasks = tasks
+      .filter((task) => task.status === "completed")
+      .map((task) => ({
+        id: task.id,
+        title: task.title,
+        type: "TASK" as const,
+        de_manifested_timestamp: task.updatedAt?.toString() ?? new Date().toISOString(),
+        status: "COMPLETED",
+        original_collection: "local_tasks",
+      }));
+
+    const dormantProjects = projects
+      .filter((project) => ["ARCHIVED", "archived", "DORMANT"].includes(project.status ?? ""))
+      .map((project) => ({
+        id: project.id,
+        title: project.name,
+        type: "PROJECT" as const,
+        de_manifested_timestamp: new Date().toISOString(),
+        status: String(project.status ?? "ARCHIVED").toUpperCase(),
+        original_collection: "local_projects",
+      }));
+
+    return [...completedTasks, ...dormantProjects].sort(
+      (a, b) => new Date(b.de_manifested_timestamp).getTime() - new Date(a.de_manifested_timestamp).getTime()
+    );
+  }, [projects, tasks]);
 
   const fetchHistory = useCallback(async () => {
     setIsLoading(true);
     addLog(">> SCANNING_HISTORICAL_CHANNELS...", "system");
 
     try {
+      if (!hasSupabaseConfig) {
+        const localNodes = buildLocalArchive();
+        setNodes(localNodes);
+        addLog(`>> LOCAL_SCAN_COMPLETE: ${localNodes.length}_NODES_IDENTIFIED`, "system");
+        return;
+      }
+
       const [tasksRes, projectsRes] = await Promise.all([
         supabase.from("tasks").select("*").eq("is_archived", true),
         supabase.from("projects").select("*").eq("is_archived", true),
@@ -61,11 +102,13 @@ export default function ArchivePage() {
       setNodes(unifiedNodes);
       addLog(`>> SCAN_COMPLETE: ${unifiedNodes.length}_NODES_IDENTIFIED`, "system");
     } catch {
-      addLog(">> SCAN_INTERRUPTED: CHANNEL_ERROR", "error");
+      const localNodes = buildLocalArchive();
+      setNodes(localNodes);
+      addLog(">> SCAN_INTERRUPTED: LOCAL_ARCHIVE_FALLBACK_ACTIVE", "warning");
     } finally {
       setIsLoading(false);
     }
-  }, [addLog]);
+  }, [addLog, buildLocalArchive]);
 
   useEffect(() => {
     void fetchHistory();
@@ -76,6 +119,20 @@ export default function ArchivePage() {
     ArkanAudio.play("restore_ascending_ping");
 
     const restoreStatus = collection === "projects" ? "active" : "todo";
+
+    if (collection === "local_tasks") {
+      await updateTask(id, { status: "todo", progress: 0 });
+      setNodes((prev) => prev.filter((node) => node.id !== id));
+      addLog(`SUCCESS: LOCAL_TASK_${id.slice(0, 8)} RESTORED`, "system");
+      return;
+    }
+
+    if (collection === "local_projects") {
+      await updateProject(id, { status: "ROUTINE" });
+      setNodes((prev) => prev.filter((node) => node.id !== id));
+      addLog(`SUCCESS: LOCAL_PROJECT_${id.slice(0, 8)} RESTORED`, "system");
+      return;
+    }
 
     const { error } = await supabase
       .from(collection)

@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { supabase } from "@/lib/supabase";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import { useSystemLogStore } from "./useSystemLogStore";
 import { ArkanAudio } from "@/lib/audio/ArkanAudio";
 import {
@@ -22,6 +23,36 @@ function formatExpeditionError(error: unknown) {
   return "UNKNOWN_EXPEDITION_FAILURE";
 }
 
+const DEFAULT_EXPEDITION_SECTORS: ExpeditionSector[] = [
+  {
+    id: "local-sector-1",
+    label: "SECTOR_44_B_GAMMA",
+    order_index: 0,
+    manifestedCount: 0,
+    totalCount: 2,
+    items: [
+      {
+        id: "local-item-1",
+        sector_id: "local-sector-1",
+        label: "FIELD_MEDKIT",
+        is_manifested: false,
+        technical_id: "EXP-001",
+        priority: "high",
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: "local-item-2",
+        sector_id: "local-sector-1",
+        label: "OFFLINE_NAV_PACKET",
+        is_manifested: false,
+        technical_id: "EXP-002",
+        priority: "medium",
+        created_at: new Date().toISOString(),
+      },
+    ],
+  },
+];
+
 interface ExpeditionState {
   sectors: ExpeditionSector[];
   archivedCount: number;
@@ -34,8 +65,10 @@ interface ExpeditionState {
   getReadiness: () => { percentage: number; manifested: number; pending: number; total: number };
 }
 
-export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
-  sectors: [],
+export const useExpeditionStore = create<ExpeditionState>()(
+  persist(
+    (set, get) => ({
+  sectors: DEFAULT_EXPEDITION_SECTORS,
   archivedCount: 0,
   isLoading: false,
   lastError: null,
@@ -44,9 +77,15 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
     set({ isLoading: true, lastError: null });
 
     try {
+      if (!hasSupabaseConfig) {
+        set({ isLoading: false, lastError: "LOCAL_MODE_NO_SUPABASE_CONFIG" });
+        useSystemLogStore.getState().addLog("EXPEDITION_LOCAL_MODE_ACTIVE", "warning");
+        return;
+      }
+
       const user = await getAuthUser();
       if (!user) {
-        set({ sectors: [], archivedCount: 0, isLoading: false, lastError: "AUTH_SESSION_REQUIRED" });
+        set({ isLoading: false, lastError: "LOCAL_MODE_AUTH_SESSION_MISSING" });
         useSystemLogStore.getState().addLog("EXPEDITION_AUTH_SESSION_REQUIRED", "error");
         return;
       }
@@ -94,9 +133,50 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
     }
 
     try {
+      if (!hasSupabaseConfig) {
+        const nextOrderIndex = get().sectors.reduce(
+          (maxOrder, sector) => Math.max(maxOrder, sector.order_index),
+          -1
+        ) + 1;
+
+        set((state) => ({
+          sectors: [
+            ...state.sectors,
+            {
+              id: crypto.randomUUID(),
+              label: normalizedLabel,
+              order_index: nextOrderIndex,
+              items: [],
+              manifestedCount: 0,
+              totalCount: 0,
+            },
+          ],
+          lastError: "LOCAL_MODE_NO_SUPABASE_CONFIG",
+        }));
+        ArkanAudio.play("system_execute_clack");
+        return;
+      }
+
       const user = await getAuthUser();
       if (!user) {
-        set({ lastError: "AUTH_SESSION_REQUIRED" });
+        const nextOrderIndex = get().sectors.reduce(
+          (maxOrder, sector) => Math.max(maxOrder, sector.order_index),
+          -1
+        ) + 1;
+        set((state) => ({
+          sectors: [
+            ...state.sectors,
+            {
+              id: crypto.randomUUID(),
+              label: normalizedLabel,
+              order_index: nextOrderIndex,
+              items: [],
+              manifestedCount: 0,
+              totalCount: 0,
+            },
+          ],
+          lastError: "LOCAL_MODE_AUTH_SESSION_MISSING",
+        }));
         useSystemLogStore.getState().addLog("EXPEDITION_AUTH_SESSION_REQUIRED", "error");
         return;
       }
@@ -152,9 +232,60 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
     }
 
     try {
+      if (!hasSupabaseConfig) {
+        set((state) => ({
+          sectors: state.sectors.map((sector) =>
+            sector.id === sectorId
+              ? {
+                  ...sector,
+                  items: [
+                    ...sector.items,
+                    {
+                      id: crypto.randomUUID(),
+                      sector_id: sectorId,
+                      label: normalizedLabel,
+                      is_manifested: false,
+                      technical_id: `EXP-${String(sector.totalCount + 1).padStart(3, "0")}`,
+                      priority,
+                      created_at: new Date().toISOString(),
+                    },
+                  ],
+                  totalCount: sector.totalCount + 1,
+                }
+              : sector
+          ),
+          lastError: "LOCAL_MODE_NO_SUPABASE_CONFIG",
+        }));
+        useSystemLogStore.getState().addLog(`LOCAL_COMPONENT_BUFFERED:${normalizedLabel}`, "status");
+        ArkanAudio.play("key_tick_mechanical");
+        return;
+      }
+
       const user = await getAuthUser();
       if (!user) {
-        set({ lastError: "AUTH_SESSION_REQUIRED" });
+        set((state) => ({
+          sectors: state.sectors.map((sector) =>
+            sector.id === sectorId
+              ? {
+                  ...sector,
+                  items: [
+                    ...sector.items,
+                    {
+                      id: crypto.randomUUID(),
+                      sector_id: sectorId,
+                      label: normalizedLabel,
+                      is_manifested: false,
+                      technical_id: `EXP-${String(sector.totalCount + 1).padStart(3, "0")}`,
+                      priority,
+                      created_at: new Date().toISOString(),
+                    },
+                  ],
+                  totalCount: sector.totalCount + 1,
+                }
+              : sector
+          ),
+          lastError: "LOCAL_MODE_AUTH_SESSION_MISSING",
+        }));
         useSystemLogStore.getState().addLog("EXPEDITION_AUTH_SESSION_REQUIRED", "error");
         return;
       }
@@ -212,6 +343,24 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
     ArkanAudio.play("ui_confirm_ping");
 
     try {
+      if (!hasSupabaseConfig || item.id.startsWith("local-")) {
+        set((current) => ({
+          archivedCount: current.archivedCount + 1,
+          sectors: current.sectors.map((candidate) =>
+            candidate.id === sector.id
+              ? {
+                  ...candidate,
+                  items: candidate.items.filter((entry) => entry.id !== itemId),
+                  manifestedCount: candidate.manifestedCount + 1,
+                }
+              : candidate
+          ),
+          lastError: hasSupabaseConfig ? current.lastError : "LOCAL_MODE_NO_SUPABASE_CONFIG",
+        }));
+        useSystemLogStore.getState().addLog(`LOCAL_ITEM_ARCHIVED:${item.technical_id}`, "system");
+        return;
+      }
+
       const { error } = await supabase
         .from("expedition_items")
         .update({
@@ -247,4 +396,15 @@ export const useExpeditionStore = create<ExpeditionState>((set, get) => ({
   },
 
   getReadiness: () => computeExpeditionReadiness(get().sectors),
-}));
+    }),
+    {
+      name: "arkan-expeditions",
+      storage: createJSONStorage(() => localStorage),
+      version: 1,
+      partialize: (state) => ({
+        sectors: state.sectors,
+        archivedCount: state.archivedCount,
+      }),
+    }
+  )
+);

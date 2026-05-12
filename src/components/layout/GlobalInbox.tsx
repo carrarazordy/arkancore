@@ -9,7 +9,7 @@ import { useState } from "react";
 
 export function GlobalInbox() {
     const { projects } = useProjectStore();
-    const { tasks } = useTaskStore();
+    const { tasks, updateTask } = useTaskStore();
     const [isEntropyModalOpen, setIsEntropyModalOpen] = useState(false);
 
     // Global Inbox Items: Tasks with no project ID or linked to a "Null" project
@@ -60,6 +60,12 @@ export function GlobalInbox() {
                                     {projects.slice(0, 2).map(p => (
                                         <button
                                             key={p.id}
+                                            type="button"
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                void updateTask(task.id, { projectId: p.id });
+                                                ArkanAudio.playFast('system_execute_clack');
+                                            }}
                                             className="px-1.5 py-0.5 bg-primary/5 border border-primary/20 rounded text-[8px] text-primary/40 hover:text-black hover:bg-primary transition-all truncate uppercase"
                                         >
                                             {p.technicalId}

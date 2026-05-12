@@ -12,6 +12,7 @@ import {
   Signal,
   Zap,
 } from "lucide-react";
+import { useDialogStore } from "@/store/useDialogStore";
 
 function formatClock(now: number) {
   return new Date(now).toLocaleTimeString("en-US", { hour12: false });
@@ -54,9 +55,11 @@ function clampProgress(task: Task) {
 type TaskCardProps = {
   task: Task;
   onDragStart: (event: React.DragEvent, taskId: string) => void;
+  onEdit: (task: Task) => void;
+  onDelete: (task: Task) => void;
 };
 
-function TaskCard({ task, onDragStart }: TaskCardProps) {
+function TaskCard({ task, onDragStart, onEdit, onDelete }: TaskCardProps) {
   const accentClass =
     task.status === "in-progress"
       ? "border-primary shadow-[0_0_12px_rgba(255,255,0,0.12)]"
@@ -99,8 +102,29 @@ function TaskCard({ task, onDragStart }: TaskCardProps) {
         </span>
 
         <div className="flex items-center gap-2 text-primary/25 transition-colors group-hover:text-primary/55">
-          <Edit3 size={13} />
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onEdit(task);
+            }}
+            className="p-1 hover:text-primary"
+            aria-label={`Edit ${task.title}`}
+          >
+            <Edit3 size={13} />
+          </button>
           {task.status === "completed" ? <CheckCircle2 size={13} /> : <MoreVertical size={13} />}
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete(task);
+            }}
+            className="p-1 text-red-500/35 hover:text-red-400"
+            aria-label={`Delete ${task.title}`}
+          >
+            X
+          </button>
         </div>
       </div>
 
@@ -114,7 +138,7 @@ function TaskCard({ task, onDragStart }: TaskCardProps) {
 }
 
 export default function KanbanPage() {
-  const { tasks, updateTask, addTask } = useTaskStore();
+  const { tasks, updateTask, addTask, deleteTask } = useTaskStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDirectory, setSelectedDirectory] = useState<string>("ALL");
   const [selectedTag, setSelectedTag] = useState<string>("ALL");
@@ -192,20 +216,55 @@ export default function KanbanPage() {
   };
 
   const handleNewTask = async () => {
-    const nextIndex = tasks.length + 1;
-    await addTask({
-      title: `TASK_ARCHIVE_${String(nextIndex).padStart(2, "0")}`,
-      description: "Queued from task archive interface.",
-      status: "todo",
-      priority: selectedTag === "#security" ? "critical" : selectedTag === "#infra" ? "high" : "medium",
-      progress: 0,
-      projectId: "global",
-      category: (selectedTag !== "ALL" ? selectedTag.replace("#", "") : "GENERAL").toUpperCase(),
-      location: "SECTOR_01",
-      directory: selectedDirectory === "ALL" ? "/ACTIVE_LOGS" : selectedDirectory,
-      tags: selectedTag === "ALL" ? ["#neural"] : [selectedTag],
+    useDialogStore.getState().openDialog({
+      title: "NEW_TASK",
+      placeholder: "TASK_TITLE",
+      confirmLabel: "CREATE_TASK",
+      onConfirm: async (value) => {
+        const title = value?.trim();
+        if (!title) return;
+
+        await addTask({
+          title,
+          description: "Queued from task archive interface.",
+          status: "todo",
+          priority: selectedTag === "#security" ? "critical" : selectedTag === "#infra" ? "high" : "medium",
+          progress: 0,
+          projectId: "global",
+          category: (selectedTag !== "ALL" ? selectedTag.replace("#", "") : "GENERAL").toUpperCase(),
+          location: "SECTOR_01",
+          directory: selectedDirectory === "ALL" ? "/ACTIVE_LOGS" : selectedDirectory,
+          tags: selectedTag === "ALL" ? ["#neural"] : [selectedTag],
+        });
+        ArkanAudio.playFast("system_engage");
+      },
     });
-    ArkanAudio.playFast("system_engage");
+  };
+
+  const handleEditTask = (task: Task) => {
+    useDialogStore.getState().openDialog({
+      title: `EDIT_TASK // ${task.id.slice(-4).toUpperCase()}`,
+      placeholder: task.title,
+      confirmLabel: "SAVE_TASK",
+      onConfirm: async (value) => {
+        const title = value?.trim();
+        if (!title) return;
+        await updateTask(task.id, { title });
+        ArkanAudio.playFast("system_execute_clack");
+      },
+    });
+  };
+
+  const handleDeleteTask = (task: Task) => {
+    useDialogStore.getState().openDialog({
+      title: `DELETE_TASK // ${task.title}`,
+      confirmLabel: "DELETE_TASK",
+      hideInput: true,
+      onConfirm: async () => {
+        await deleteTask(task.id);
+        ArkanAudio.playFast("system_purge");
+      },
+    });
   };
 
   return (
@@ -386,7 +445,13 @@ export default function KanbanPage() {
                       isDropActive && "rounded-sm bg-primary/5"
                     )}>
                       {column.tasks.map((task) => (
-                        <TaskCard key={task.id} task={task} onDragStart={handleDragStart} />
+                        <TaskCard
+                          key={task.id}
+                          task={task}
+                          onDragStart={handleDragStart}
+                          onEdit={handleEditTask}
+                          onDelete={handleDeleteTask}
+                        />
                       ))}
                     </div>
                   </section>

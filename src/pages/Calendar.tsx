@@ -29,7 +29,7 @@ import {
   ShieldAlert,
   X,
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import {
   buildTaskPromotionDraft,
   buildTemporalPayload,
@@ -49,6 +49,23 @@ const PRIORITY_STYLES: Record<TemporalEvent["priority"], string> = {
   MEDIUM: "border-[#8e950f] bg-[#141705] text-[#effd63]",
   HIGH: "border-[#f7ff55] bg-[#1b1b04] text-[#fffdb2] shadow-[0_0_18px_rgba(247,255,85,0.16)]",
 };
+
+const LOCAL_EVENTS_STORAGE_KEY = "arkan-calendar-events";
+
+function loadLocalEvents() {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_EVENTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as TemporalEvent[];
+    return Array.isArray(parsed) ? parsed.map(normalizeEventRow) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalEvents(events: TemporalEvent[]) {
+  window.localStorage.setItem(LOCAL_EVENTS_STORAGE_KEY, JSON.stringify(events));
+}
 
 function normalizeEventRow(row: any): TemporalEvent {
   return {
@@ -469,6 +486,14 @@ export default function CalendarPage() {
   const fetchEvents = useCallback(async () => {
     setIsSyncing(true);
 
+    if (!hasSupabaseConfig) {
+      setEvents(sortEvents(loadLocalEvents()));
+      setIsRealtimeLive(false);
+      setIsSyncing(false);
+      addLog("TEMPORAL_LOCAL_MODE_ACTIVE", "warning");
+      return;
+    }
+
     const { data, error } = await supabase
       .from("events")
       .select("id,title,start_timestamp,end_timestamp,priority,tags,description")
@@ -478,6 +503,7 @@ export default function CalendarPage() {
 
     if (error) {
       addLog("TEMPORAL_UPLINK_FAILURE", "error");
+      setEvents(sortEvents(loadLocalEvents()));
       setIsSyncing(false);
       return;
     }
@@ -496,6 +522,11 @@ export default function CalendarPage() {
   }, [fetchEvents]);
 
   useEffect(() => {
+    if (!hasSupabaseConfig) {
+      setIsRealtimeLive(false);
+      return;
+    }
+
     const channel = supabase
       .channel(`temporal-week-${format(weekStart, "yyyyMMdd")}`)
       .on(
@@ -569,6 +600,19 @@ export default function CalendarPage() {
       setIsCreateOpen(false);
       ArkanAudio.playFast("system_execute_clack");
 
+      if (!hasSupabaseConfig) {
+        const localEvent = { ...optimisticEvent, id: crypto.randomUUID() };
+        setEvents((current) => {
+          const nextEvents = sortEvents([...current.filter((item) => item.id !== optimisticEvent.id), localEvent]);
+          saveLocalEvents(nextEvents);
+          return nextEvents;
+        });
+        setDraft(createDraft(selectedDate));
+        setIsSubmitting(false);
+        addLog(`LOCAL_TEMPORAL_SEQUENCE_SAVED:${payload.title}`, "status");
+        return;
+      }
+
       const { data, error } = await supabase
         .from("events")
         .insert({
@@ -583,11 +627,15 @@ export default function CalendarPage() {
         .single();
 
       if (error) {
-        setEvents((current) => current.filter((item) => item.id !== optimisticEvent.id));
-        setIsCreateOpen(true);
+        const localEvent = { ...optimisticEvent, id: crypto.randomUUID() };
+        setEvents((current) => {
+          const nextEvents = sortEvents([...current.filter((item) => item.id !== optimisticEvent.id), localEvent]);
+          saveLocalEvents(nextEvents);
+          return nextEvents;
+        });
+        setDraft(createDraft(selectedDate));
         setIsSubmitting(false);
-        addLog("TEMPORAL_SEQUENCE_COMMIT_FAILED", "error");
-        ArkanAudio.playFast("system_purge");
+        addLog("TEMPORAL_UPLINK_FAILED_LOCAL_SAVE_ACTIVE", "warning");
         return;
       }
 

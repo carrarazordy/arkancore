@@ -13,6 +13,7 @@ import { ArkanAudio } from "@/lib/audio/ArkanAudio";
 import { useDialogStore } from "@/store/useDialogStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useTaskStore } from "@/store/useTaskStore";
+import { useNoteStore } from "@/store/useNoteStore";
 
 interface ContextMenuItem {
     label: string;
@@ -70,7 +71,7 @@ export default function TacticalContextMenu() {
         { label: "COPY_NODE_ID", icon: Copy, action: "COPY" },
     ];
 
-    if (contextTarget?.type === 'TASK' || contextTarget?.type === 'FOLDER') {
+    if (contextTarget?.type === 'TASK' || contextTarget?.type === 'FOLDER' || contextTarget?.type === 'NOTE') {
         items.push({ label: "RENAME_NODE", icon: Edit2, action: "RENAME" });
     }
 
@@ -79,7 +80,6 @@ export default function TacticalContextMenu() {
     const performAction = (action: string) => {
         ArkanAudio.playFast('confirm');
         setIsVisible(false);
-        console.log(`>> ACTION: ${action}`);
 
         if (action === "DELETE" && contextTarget?.type === "PROJECT") {
             useDialogStore.getState().openDialog({
@@ -88,6 +88,28 @@ export default function TacticalContextMenu() {
                 hideInput: true,
                 onConfirm: async () => {
                     await useProjectStore.getState().deleteProject(contextTarget.id);
+                    ArkanAudio.playFast('system_purge');
+                }
+            });
+        }
+        else if (action === "DELETE" && contextTarget?.type === "TASK") {
+            useDialogStore.getState().openDialog({
+                title: `DELETE TASK // ${contextTarget.name}`,
+                confirmLabel: "DELETE_TASK",
+                hideInput: true,
+                onConfirm: async () => {
+                    await useTaskStore.getState().deleteTask(contextTarget.id);
+                    ArkanAudio.playFast('system_purge');
+                }
+            });
+        }
+        else if (action === "DELETE" && (contextTarget?.type === "FOLDER" || contextTarget?.type === "NOTE")) {
+            useDialogStore.getState().openDialog({
+                title: `DELETE NODE // ${contextTarget.name}`,
+                confirmLabel: "DELETE_NODE",
+                hideInput: true,
+                onConfirm: async () => {
+                    useNoteStore.getState().deleteNode(contextTarget.id);
                     ArkanAudio.playFast('system_purge');
                 }
             });
@@ -104,6 +126,10 @@ export default function TacticalContextMenu() {
                 onConfirm: async (val) => {
                     if (val && contextTarget.type === 'TASK') {
                         await useTaskStore.getState().updateTask(contextTarget.id, { title: val });
+                        ArkanAudio.playFast('system_execute_clack');
+                    }
+                    if (val && (contextTarget.type === 'FOLDER' || contextTarget.type === 'NOTE')) {
+                        useNoteStore.getState().updateNode(contextTarget.id, { title: val });
                         ArkanAudio.playFast('system_execute_clack');
                     }
                 }
