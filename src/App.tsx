@@ -4,6 +4,7 @@ import { ArrowRight, AtSign, LockKeyhole, Shield, UserPlus } from "lucide-react"
 import { AppShell } from "./components/layout/app-shell";
 import { AuthGuard } from "./components/auth/AuthGuard";
 import { AudioInitializer } from "./components/layout/AudioInitializer";
+import { KeyboardSelectionController } from "./components/layout/KeyboardSelectionController";
 import { SplashSequence } from "./components/layout/SplashSequence";
 import { TechnicalProtocolDialog } from "./components/ui/technical-protocol-dialog";
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
@@ -424,6 +425,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AudioInitializer />
+      <KeyboardSelectionController />
       {showSplash ? <SplashSequence onComplete={handleSplashComplete} /> : null}
       <AuthGuard>
         <Routes>

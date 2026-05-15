@@ -4,12 +4,17 @@ import { ArkanAudio } from "@/lib/audio/ArkanAudio";
 import { cn } from "@/lib/utils";
 import {
   CheckCircle2,
+  CheckSquare2,
+  Columns3,
   Edit3,
+  ListTree,
   MoreVertical,
   Plus,
+  PlusCircle,
   Search,
   Shield,
   Signal,
+  Trash2,
   Zap,
 } from "lucide-react";
 import { useDialogStore } from "@/store/useDialogStore";
@@ -57,15 +62,19 @@ type TaskCardProps = {
   onDragStart: (event: React.DragEvent, taskId: string) => void;
   onEdit: (task: Task) => void;
   onDelete: (task: Task) => void;
+  onAddSubtask: (task: Task) => void;
+  onToggleSubtask: (taskId: string, subtaskId: string) => void;
 };
 
-function TaskCard({ task, onDragStart, onEdit, onDelete }: TaskCardProps) {
+function TaskCard({ task, onDragStart, onEdit, onDelete, onAddSubtask, onToggleSubtask }: TaskCardProps) {
   const accentClass =
     task.status === "in-progress"
       ? "border-primary shadow-[0_0_12px_rgba(255,255,0,0.12)]"
       : task.status === "completed"
         ? "border-primary/10 opacity-50 grayscale"
         : "border-primary/25";
+  const completedSubtasks = task.subtasks?.filter((subtask) => subtask.completed).length ?? 0;
+  const totalSubtasks = task.subtasks?.length ?? 0;
 
   return (
     <div
@@ -106,6 +115,17 @@ function TaskCard({ task, onDragStart, onEdit, onDelete }: TaskCardProps) {
             type="button"
             onClick={(event) => {
               event.stopPropagation();
+              onAddSubtask(task);
+            }}
+            className="p-1 hover:text-primary"
+            aria-label={`Add subtask to ${task.title}`}
+          >
+            <PlusCircle size={13} />
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
               onEdit(task);
             }}
             className="p-1 hover:text-primary"
@@ -133,15 +153,180 @@ function TaskCard({ task, onDragStart, onEdit, onDelete }: TaskCardProps) {
           <div className="h-full bg-primary shadow-[0_0_6px_rgba(255,255,0,0.4)]" style={{ width: `${clampProgress(task)}%` }} />
         </div>
       ) : null}
+
+      <div className="mt-4 border-t border-primary/10 pt-3">
+        <div className="mb-2 flex items-center justify-between text-[9px] uppercase tracking-[0.18em] text-primary/40">
+          <span>SUBTASKS</span>
+          <span>{completedSubtasks}/{totalSubtasks}</span>
+        </div>
+        {task.subtasks?.length ? (
+          <div className="space-y-2">
+            {task.subtasks.slice(0, 3).map((subtask) => (
+              <button
+                key={subtask.id}
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleSubtask(task.id, subtask.id);
+                }}
+                className={cn(
+                  "flex w-full items-center gap-2 text-left text-[10px] uppercase tracking-[0.14em] transition-colors",
+                  subtask.completed ? "text-primary/30 line-through" : "text-white/55 hover:text-primary"
+                )}
+              >
+                <CheckSquare2 size={12} className={subtask.completed ? "text-primary/35" : "text-primary/65"} />
+                <span className="min-w-0 truncate">{subtask.title}</span>
+              </button>
+            ))}
+            {task.subtasks.length > 3 ? (
+              <div className="text-[9px] uppercase tracking-[0.16em] text-primary/25">
+                +{task.subtasks.length - 3}_MORE
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onAddSubtask(task);
+            }}
+            className="text-[10px] uppercase tracking-[0.18em] text-primary/35 transition-colors hover:text-primary"
+          >
+            + ADD_SUBTASK
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type TaskListViewProps = {
+  tasks: Task[];
+  onStatusChange: (task: Task, status: string) => void;
+  onEdit: (task: Task) => void;
+  onDelete: (task: Task) => void;
+  onAddSubtask: (task: Task) => void;
+  onToggleSubtask: (taskId: string, subtaskId: string) => void;
+  onDeleteSubtask: (taskId: string, subtaskId: string) => void;
+};
+
+function TaskListView({
+  tasks,
+  onStatusChange,
+  onEdit,
+  onDelete,
+  onAddSubtask,
+  onToggleSubtask,
+  onDeleteSubtask,
+}: TaskListViewProps) {
+  return (
+    <div className="min-w-[920px] space-y-3">
+      {tasks.map((task) => {
+        const completedSubtasks = task.subtasks?.filter((subtask) => subtask.completed).length ?? 0;
+        const totalSubtasks = task.subtasks?.length ?? 0;
+
+        return (
+          <article key={task.id} className="border border-primary/14 bg-[#050502]/90 px-4 py-4 transition-colors hover:border-primary/35">
+            <div className="grid gap-4 xl:grid-cols-[minmax(220px,1fr)_160px_140px_190px_120px] xl:items-center">
+              <div className="min-w-0">
+                <div className="flex items-center gap-3">
+                  <span className="text-[9px] uppercase tracking-[0.18em] text-primary/32">#{task.id.slice(-4).toUpperCase()}</span>
+                  <span className="truncate text-[13px] font-semibold uppercase tracking-[0.14em] text-primary">{task.title}</span>
+                </div>
+                <p className="mt-2 line-clamp-1 text-[10px] uppercase tracking-[0.14em] text-white/35">
+                  {task.description ?? "NO_DESCRIPTION"}
+                </p>
+              </div>
+
+              <div className="text-[10px] uppercase tracking-[0.18em] text-primary/60">{task.category ?? "GENERAL"}</div>
+              <div className="text-[10px] uppercase tracking-[0.18em] text-primary/50">{priorityLabel(task.priority)}</div>
+
+              <div className="flex items-center gap-2">
+                {["todo", "in-progress", "completed"].map((status) => (
+                  <button
+                    key={status}
+                    type="button"
+                    onClick={() => onStatusChange(task, status)}
+                    className={cn(
+                      "border px-2 py-1 text-[9px] uppercase tracking-[0.14em] transition",
+                      task.status === status
+                        ? "border-primary bg-primary text-black"
+                        : "border-primary/15 text-primary/45 hover:border-primary/45 hover:text-primary"
+                    )}
+                  >
+                    {statusDisplay(status)}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 text-primary/45 xl:justify-start">
+                <button type="button" onClick={() => onAddSubtask(task)} className="p-2 hover:text-primary" aria-label={`Add subtask to ${task.title}`}>
+                  <PlusCircle size={14} />
+                </button>
+                <button type="button" onClick={() => onEdit(task)} className="p-2 hover:text-primary" aria-label={`Edit ${task.title}`}>
+                  <Edit3 size={14} />
+                </button>
+                <button type="button" onClick={() => onDelete(task)} className="p-2 text-red-500/40 hover:text-red-400" aria-label={`Delete ${task.title}`}>
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 border-t border-primary/10 pt-3">
+              <div className="mb-2 flex items-center justify-between text-[9px] uppercase tracking-[0.2em] text-primary/35">
+                <span>SUBTASK_STREAM</span>
+                <span>{completedSubtasks}/{totalSubtasks}</span>
+              </div>
+              {task.subtasks?.length ? (
+                <div className="grid gap-2 md:grid-cols-2">
+                  {task.subtasks.map((subtask) => (
+                    <div key={subtask.id} className="flex items-center gap-2 border border-primary/10 bg-primary/5 px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => onToggleSubtask(task.id, subtask.id)}
+                        className={cn("shrink-0 transition-colors", subtask.completed ? "text-primary/35" : "text-primary/80")}
+                        aria-label={`Toggle ${subtask.title}`}
+                      >
+                        <CheckSquare2 size={13} />
+                      </button>
+                      <span className={cn("min-w-0 flex-1 truncate text-[10px] uppercase tracking-[0.16em]", subtask.completed ? "text-white/25 line-through" : "text-white/60")}>
+                        {subtask.title}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteSubtask(task.id, subtask.id)}
+                        className="shrink-0 text-red-500/30 transition-colors hover:text-red-400"
+                        aria-label={`Delete ${subtask.title}`}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onAddSubtask(task)}
+                  className="text-[10px] uppercase tracking-[0.18em] text-primary/35 transition-colors hover:text-primary"
+                >
+                  + ADD_FIRST_SUBTASK
+                </button>
+              )}
+            </div>
+          </article>
+        );
+      })}
     </div>
   );
 }
 
 export default function KanbanPage() {
-  const { tasks, updateTask, addTask, deleteTask } = useTaskStore();
+  const { tasks, updateTask, addTask, deleteTask, addSubtask, toggleSubtask, deleteSubtask } = useTaskStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDirectory, setSelectedDirectory] = useState<string>("ALL");
   const [selectedTag, setSelectedTag] = useState<string>("ALL");
+  const [viewMode, setViewMode] = useState<"kanban" | "list">("kanban");
   const [now, setNow] = useState(() => Date.now());
   const [sessionStart] = useState(() => Date.now());
   const [dropStatus, setDropStatus] = useState<string | null>(null);
@@ -215,6 +400,18 @@ export default function KanbanPage() {
     ArkanAudio.playFast("system_execute_clack");
   };
 
+  const handleStatusChange = async (task: Task, status: string) => {
+    if (task.status === status) {
+      return;
+    }
+
+    await updateTask(task.id, {
+      status,
+      progress: status === "completed" ? 100 : status === "todo" ? 0 : task.progress ?? 45,
+    });
+    ArkanAudio.playFast("system_execute_clack");
+  };
+
   const handleNewTask = async () => {
     useDialogStore.getState().openDialog({
       title: "NEW_TASK",
@@ -265,6 +462,30 @@ export default function KanbanPage() {
         ArkanAudio.playFast("system_purge");
       },
     });
+  };
+
+  const handleAddSubtask = (task: Task) => {
+    useDialogStore.getState().openDialog({
+      title: `NEW_SUBTASK // ${task.id.slice(-4).toUpperCase()}`,
+      placeholder: "SUBTASK_TITLE",
+      confirmLabel: "CREATE_SUBTASK",
+      onConfirm: async (value) => {
+        const title = value?.trim();
+        if (!title) return;
+        await addSubtask(task.id, title);
+        ArkanAudio.playFast("system_execute_clack");
+      },
+    });
+  };
+
+  const handleToggleSubtask = async (taskId: string, subtaskId: string) => {
+    await toggleSubtask(taskId, subtaskId);
+    ArkanAudio.playFast("key_tick_mechanical");
+  };
+
+  const handleDeleteSubtask = async (taskId: string, subtaskId: string) => {
+    await deleteSubtask(taskId, subtaskId);
+    ArkanAudio.playFast("system_purge");
   };
 
   return (
@@ -390,6 +611,31 @@ export default function KanbanPage() {
               <span className="text-[10px] uppercase tracking-[0.18em] text-primary/30">F3_SEARCH</span>
             </label>
 
+            <div className="flex border border-primary/15 bg-[#050502]/90 p-1">
+              <button
+                type="button"
+                onClick={() => setViewMode("kanban")}
+                className={cn(
+                  "inline-flex h-10 items-center gap-2 px-3 text-[10px] uppercase tracking-[0.2em] transition",
+                  viewMode === "kanban" ? "bg-primary text-black" : "text-primary/55 hover:text-primary"
+                )}
+              >
+                <Columns3 size={14} />
+                KANBAN
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("list")}
+                className={cn(
+                  "inline-flex h-10 items-center gap-2 px-3 text-[10px] uppercase tracking-[0.2em] transition",
+                  viewMode === "list" ? "bg-primary text-black" : "text-primary/55 hover:text-primary"
+                )}
+              >
+                <ListTree size={14} />
+                LIST
+              </button>
+            </div>
+
             <div className="ml-auto flex items-center gap-8 text-right text-[10px] uppercase tracking-[0.22em] text-primary/75">
               <div>
                 <div className="text-white/24">UTC_CLOCK</div>
@@ -402,62 +648,76 @@ export default function KanbanPage() {
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden px-6 py-5 custom-scrollbar">
-            <div className="grid min-w-[980px] grid-cols-3 gap-6 h-full">
-              {columns.map((column) => {
-                const isDropActive = dropStatus === column.id;
-                return (
-                  <section
-                    key={column.id}
-                    className="flex h-full min-h-0 flex-col"
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      if (dropStatus !== column.id) setDropStatus(column.id);
-                    }}
-                    onDragLeave={() => setDropStatus((current) => (current === column.id ? null : current))}
-                    onDrop={(event) => void handleDrop(event, column.id)}
-                  >
-                    <div className={cn(
-                      "mb-5 flex items-center justify-between border-b pb-3",
-                      column.id === "in-progress" ? "border-primary/55" : "border-primary/18"
-                    )}>
+          <div className={cn("min-h-0 flex-1 px-6 py-5 custom-scrollbar", viewMode === "kanban" ? "overflow-x-auto overflow-y-hidden" : "overflow-auto")}>
+            {viewMode === "kanban" ? (
+              <div className="grid h-full min-w-[980px] grid-cols-3 gap-6">
+                {columns.map((column) => {
+                  const isDropActive = dropStatus === column.id;
+                  return (
+                    <section
+                      key={column.id}
+                      className="flex h-full min-h-0 flex-col"
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        if (dropStatus !== column.id) setDropStatus(column.id);
+                      }}
+                      onDragLeave={() => setDropStatus((current) => (current === column.id ? null : current))}
+                      onDrop={(event) => void handleDrop(event, column.id)}
+                    >
                       <div className={cn(
-                        "flex items-center gap-3 text-sm font-semibold uppercase tracking-[0.28em]",
-                        column.id === "completed" ? "text-primary/35" : "text-primary"
+                        "mb-5 flex items-center justify-between border-b pb-3",
+                        column.id === "in-progress" ? "border-primary/55" : "border-primary/18"
                       )}>
+                        <div className={cn(
+                          "flex items-center gap-3 text-sm font-semibold uppercase tracking-[0.28em]",
+                          column.id === "completed" ? "text-primary/35" : "text-primary"
+                        )}>
+                          <span className={cn(
+                            "h-2 w-2 rotate-45",
+                            column.id === "in-progress" ? "bg-primary shadow-[0_0_8px_rgba(255,255,0,0.4)]" : column.id === "completed" ? "bg-primary/12" : "bg-primary/30"
+                          )} />
+                          {column.label}
+                        </div>
                         <span className={cn(
-                          "h-2 w-2 rotate-45",
-                          column.id === "in-progress" ? "bg-primary shadow-[0_0_8px_rgba(255,255,0,0.4)]" : column.id === "completed" ? "bg-primary/12" : "bg-primary/30"
-                        )} />
-                        {column.label}
+                          "border px-3 py-1 text-[10px] uppercase tracking-[0.18em]",
+                          column.id === "in-progress" ? "border-primary/40 bg-primary/10 text-primary" : column.id === "completed" ? "border-primary/10 bg-primary/5 text-primary/22" : "border-primary/12 bg-primary/5 text-primary/45"
+                        )}>
+                          CNT_{String(column.tasks.length).padStart(2, "0")}
+                        </span>
                       </div>
-                      <span className={cn(
-                        "border px-3 py-1 text-[10px] uppercase tracking-[0.18em]",
-                        column.id === "in-progress" ? "border-primary/40 bg-primary/10 text-primary" : column.id === "completed" ? "border-primary/10 bg-primary/5 text-primary/22" : "border-primary/12 bg-primary/5 text-primary/45"
-                      )}>
-                        CNT_{String(column.tasks.length).padStart(2, "0")}
-                      </span>
-                    </div>
 
-                    <div className={cn(
-                      "flex-1 space-y-4 overflow-y-auto pr-2 custom-scrollbar transition-colors",
-                      column.id === "completed" && "opacity-60 hover:opacity-100",
-                      isDropActive && "rounded-sm bg-primary/5"
-                    )}>
-                      {column.tasks.map((task) => (
-                        <TaskCard
-                          key={task.id}
-                          task={task}
-                          onDragStart={handleDragStart}
-                          onEdit={handleEditTask}
-                          onDelete={handleDeleteTask}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                );
-              })}
-            </div>
+                      <div className={cn(
+                        "flex-1 space-y-4 overflow-y-auto pr-2 custom-scrollbar transition-colors",
+                        column.id === "completed" && "opacity-60 hover:opacity-100",
+                        isDropActive && "rounded-sm bg-primary/5"
+                      )}>
+                        {column.tasks.map((task) => (
+                          <TaskCard
+                            key={task.id}
+                            task={task}
+                            onDragStart={handleDragStart}
+                            onEdit={handleEditTask}
+                            onDelete={handleDeleteTask}
+                            onAddSubtask={handleAddSubtask}
+                            onToggleSubtask={handleToggleSubtask}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            ) : (
+              <TaskListView
+                tasks={filteredTasks}
+                onStatusChange={(task, status) => void handleStatusChange(task, status)}
+                onEdit={handleEditTask}
+                onDelete={handleDeleteTask}
+                onAddSubtask={handleAddSubtask}
+                onToggleSubtask={(taskId, subtaskId) => void handleToggleSubtask(taskId, subtaskId)}
+                onDeleteSubtask={(taskId, subtaskId) => void handleDeleteSubtask(taskId, subtaskId)}
+              />
+            )}
           </div>
 
           <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-primary/10 px-6 py-4 text-[10px] uppercase tracking-[0.22em] text-primary/55">

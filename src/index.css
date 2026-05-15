@@ -33,6 +33,19 @@ textarea.selection-yellow::selection {
   color: #000000;
 }
 
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:focus-visible,
+[data-keyboard-selected="true"] {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 1px #000000, 0 0 18px color-mix(in srgb, var(--color-primary) 45%, transparent);
+}
+
 /* MARKDOWN_MARKER_PROTOCOL */
 .md-marker {
   opacity: 0.15; /* SÃ­mbolos Markdown ficam quase invisÃ­veis para focar no conteÃºdo */

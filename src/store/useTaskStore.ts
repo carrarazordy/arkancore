@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+export interface TaskSubtask {
+  id: string;
+  title: string;
+  completed: boolean;
+  createdAt?: Date;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -14,6 +21,7 @@ export interface Task {
   location?: string;
   directory?: string;
   tags?: string[];
+  subtasks?: TaskSubtask[];
 }
 
 interface TaskState {
@@ -21,6 +29,9 @@ interface TaskState {
   addTask: (task: Omit<Task, "id">) => Promise<void>;
   updateTask: (id: string, updates: Partial<Task>) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
+  addSubtask: (taskId: string, title: string) => Promise<void>;
+  toggleSubtask: (taskId: string, subtaskId: string) => Promise<void>;
+  deleteSubtask: (taskId: string, subtaskId: string) => Promise<void>;
 }
 
 const seededTasks: Task[] = [
@@ -120,6 +131,60 @@ export const useTaskStore = create<TaskState>()(
       deleteTask: async (id) => {
         set((state) => ({
           tasks: state.tasks.filter((task) => task.id !== id),
+        }));
+      },
+      addSubtask: async (taskId, title) => {
+        const normalizedTitle = title.trim();
+        if (!normalizedTitle) {
+          return;
+        }
+
+        set((state) => ({
+          tasks: state.tasks.map((task) =>
+            task.id === taskId
+              ? {
+                  ...task,
+                  subtasks: [
+                    ...(task.subtasks ?? []),
+                    {
+                      id: crypto.randomUUID(),
+                      title: normalizedTitle,
+                      completed: false,
+                      createdAt: new Date(),
+                    },
+                  ],
+                  updatedAt: new Date(),
+                }
+              : task
+          ),
+        }));
+      },
+      toggleSubtask: async (taskId, subtaskId) => {
+        set((state) => ({
+          tasks: state.tasks.map((task) =>
+            task.id === taskId
+              ? {
+                  ...task,
+                  subtasks: (task.subtasks ?? []).map((subtask) =>
+                    subtask.id === subtaskId ? { ...subtask, completed: !subtask.completed } : subtask
+                  ),
+                  updatedAt: new Date(),
+                }
+              : task
+          ),
+        }));
+      },
+      deleteSubtask: async (taskId, subtaskId) => {
+        set((state) => ({
+          tasks: state.tasks.map((task) =>
+            task.id === taskId
+              ? {
+                  ...task,
+                  subtasks: (task.subtasks ?? []).filter((subtask) => subtask.id !== subtaskId),
+                  updatedAt: new Date(),
+                }
+              : task
+          ),
         }));
       },
     }),

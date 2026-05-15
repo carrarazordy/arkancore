@@ -231,31 +231,35 @@ export const useExpeditionStore = create<ExpeditionState>()(
       return;
     }
 
+    const pendingId = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    const sectorBeforeWrite = get().sectors.find((sector) => sector.id === sectorId);
+    const pendingItem: ExpeditionItem = {
+      id: pendingId,
+      sector_id: sectorId,
+      label: normalizedLabel,
+      is_manifested: false,
+      technical_id: `EXP-${String((sectorBeforeWrite?.totalCount ?? 0) + 1).padStart(3, "0")}`,
+      priority,
+      created_at: createdAt,
+    };
+
+    set((state) => ({
+      sectors: state.sectors.map((sector) =>
+        sector.id === sectorId
+          ? {
+              ...sector,
+              items: [...sector.items, pendingItem],
+              totalCount: sector.totalCount + 1,
+            }
+          : sector
+      ),
+      lastError: null,
+    }));
+
     try {
       if (!hasSupabaseConfig) {
-        set((state) => ({
-          sectors: state.sectors.map((sector) =>
-            sector.id === sectorId
-              ? {
-                  ...sector,
-                  items: [
-                    ...sector.items,
-                    {
-                      id: crypto.randomUUID(),
-                      sector_id: sectorId,
-                      label: normalizedLabel,
-                      is_manifested: false,
-                      technical_id: `EXP-${String(sector.totalCount + 1).padStart(3, "0")}`,
-                      priority,
-                      created_at: new Date().toISOString(),
-                    },
-                  ],
-                  totalCount: sector.totalCount + 1,
-                }
-              : sector
-          ),
-          lastError: "LOCAL_MODE_NO_SUPABASE_CONFIG",
-        }));
+        set({ lastError: "LOCAL_MODE_NO_SUPABASE_CONFIG" });
         useSystemLogStore.getState().addLog(`LOCAL_COMPONENT_BUFFERED:${normalizedLabel}`, "status");
         ArkanAudio.play("key_tick_mechanical");
         return;
@@ -263,29 +267,7 @@ export const useExpeditionStore = create<ExpeditionState>()(
 
       const user = await getAuthUser();
       if (!user) {
-        set((state) => ({
-          sectors: state.sectors.map((sector) =>
-            sector.id === sectorId
-              ? {
-                  ...sector,
-                  items: [
-                    ...sector.items,
-                    {
-                      id: crypto.randomUUID(),
-                      sector_id: sectorId,
-                      label: normalizedLabel,
-                      is_manifested: false,
-                      technical_id: `EXP-${String(sector.totalCount + 1).padStart(3, "0")}`,
-                      priority,
-                      created_at: new Date().toISOString(),
-                    },
-                  ],
-                  totalCount: sector.totalCount + 1,
-                }
-              : sector
-          ),
-          lastError: "LOCAL_MODE_AUTH_SESSION_MISSING",
-        }));
+        set({ lastError: "LOCAL_MODE_AUTH_SESSION_MISSING" });
         useSystemLogStore.getState().addLog("EXPEDITION_AUTH_SESSION_REQUIRED", "error");
         return;
       }
@@ -313,8 +295,7 @@ export const useExpeditionStore = create<ExpeditionState>()(
           sector.id === sectorId
             ? {
                 ...sector,
-                items: [...sector.items, data],
-                totalCount: sector.totalCount + 1,
+                items: sector.items.map((item) => (item.id === pendingId ? data : item)),
               }
             : sector
         ),
@@ -326,7 +307,7 @@ export const useExpeditionStore = create<ExpeditionState>()(
       console.error("Error buffering expedition component:", error);
       const message = formatExpeditionError(error);
       set({ lastError: message });
-      useSystemLogStore.getState().addLog(`COMPONENT_APPEND_FAILED:${message}`, "error");
+      useSystemLogStore.getState().addLog(`COMPONENT_BUFFERED_LOCALLY_REMOTE_FAILED:${message}`, "warning");
     }
   },
 

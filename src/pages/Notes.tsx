@@ -7,6 +7,7 @@ import { useHardwareMetrics } from '@/store/useHardwareMetrics';
 import { useChronosStore } from '@/store/useChronosStore';
 import { ArkanAudio } from '@/lib/audio/ArkanAudio';
 import { cn } from '@/lib/utils';
+import { buildNotesBackup, buildNotesMarkdown, buildSelectedNoteMarkdown } from '@/lib/notesExport';
 import {
   Activity,
   BrainCircuit,
@@ -19,6 +20,8 @@ import {
   Copy,
   Cpu,
   Database,
+  Download,
+  FileArchive,
   FileSearch,
   FileText,
   Folder,
@@ -49,6 +52,26 @@ function getTextIndexFromPosition(lines: string[], line: number, char: number) {
     index += (lines[i] ?? '').length + 1;
   }
   return index + char;
+}
+
+function sanitizeFilename(value: string) {
+  return value
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, '_')
+    .slice(0, 80) || 'arkan-notes';
+}
+
+function triggerDownload(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function formatRuntime(startedAt: number) {
@@ -880,6 +903,32 @@ export default function NotesPage() {
     }
   }, [addLog, selectedContent, selectedNode]);
 
+  const handleExportNotesBackup = useCallback(() => {
+    const backup = buildNotesBackup(nodes, selectedNodeId);
+    triggerDownload('arkan-notes-backup.json', JSON.stringify(backup, null, 2), 'application/json');
+    addLog('NOTES_BACKUP_READY', 'system');
+    ArkanAudio.playFast('system_execute_clack');
+  }, [addLog, nodes, selectedNodeId]);
+
+  const handleExportMarkdown = useCallback(() => {
+    const markdown = selectedNode
+      ? buildSelectedNoteMarkdown(selectedNode)
+      : buildNotesMarkdown(nodes);
+
+    if (!markdown.trim()) {
+      addLog('MARKDOWN_EXPORT_REJECTED_NO_NOTE', 'warning');
+      return;
+    }
+
+    const filename = selectedNode
+      ? `${sanitizeFilename(selectedNode.title)}.md`
+      : 'arkan-notes-export.md';
+
+    triggerDownload(filename, markdown, 'text/markdown;charset=utf-8');
+    addLog(selectedNode ? `MARKDOWN_NOTE_EXPORTED:${selectedNode.technicalId}` : 'MARKDOWN_ARCHIVE_EXPORTED', 'system');
+    ArkanAudio.playFast('system_execute_clack');
+  }, [addLog, nodes, selectedNode]);
+
   const handlePatternRecognition = useCallback(() => {
     if (!selectedNode || selectedNode.type !== 'note') {
       addLog('PATTERN_RECOGNITION_REJECTED_NO_NOTE', 'warning');
@@ -1030,6 +1079,12 @@ export default function NotesPage() {
                 </div>
 
                 <div className="flex items-center gap-2 text-white/35">
+                  <button type="button" onClick={handleExportNotesBackup} className="border border-primary/15 p-2 transition hover:border-primary/40 hover:text-primary" aria-label="Export notes backup">
+                    <FileArchive size={14} />
+                  </button>
+                  <button type="button" onClick={handleExportMarkdown} className="border border-primary/15 p-2 transition hover:border-primary/40 hover:text-primary" aria-label="Export markdown">
+                    <Download size={14} />
+                  </button>
                   <button type="button" onClick={() => void handleShareCurrentNote()} className="border border-primary/15 p-2 transition hover:border-primary/40 hover:text-primary">
                     <Share2 size={14} />
                   </button>

@@ -23,7 +23,7 @@ import { ArkanCommands } from "@/lib/commands";
 import { useUIStore } from "@/store/useUIStore";
 import { hasCompletedOnboarding } from "@/lib/onboarding";
 
-const CONTENT_ROUTES = ["/dashboard", "/operations", "/kanban", "/notes", "/timers", "/search", "/archive", "/expeditions", "/shopping", "/calendar", "/settings"];
+const CONTENT_ROUTES = ["/dashboard", "/operations", "/kanban", "/tasks", "/notes", "/timers", "/search", "/archive", "/expeditions", "/shopping", "/calendar", "/settings"];
 const INBOX_HIDDEN_ROUTES = ["/dashboard", "/operations", "/kanban", "/tasks", "/timers", "/search", "/expeditions", "/shopping", "/calendar", "/settings"];
 
 function hexToRgb(hex: string) {
